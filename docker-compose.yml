@@ -18,10 +18,11 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://servicecheck:${DB_PASSWORD:-servicecheck}@db:5432/servicecheck
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY setzen, z. B. mit: openssl rand -hex 32}
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY muss gesetzt sein}"
       ADMIN_USER: ${ADMIN_USER:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD setzen}
-      REPORT_COMPANY: ${REPORT_COMPANY:-Managed Service Provider}
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?ADMIN_PASSWORD muss gesetzt sein}"
+      REPORT_COMPANY: "${REPORT_COMPANY:-PCO}"
+      SEED_DEMO_DATA: "${SEED_DEMO_DATA:-0}"
     ports:
       - "8000:8000"
 volumes:
