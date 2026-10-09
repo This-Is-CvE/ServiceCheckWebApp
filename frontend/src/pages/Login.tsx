@@ -27,7 +27,8 @@ export default function Login() {
   return (
     <div className="center">
       <form className="card login" onSubmit={submit}>
-        <h1>Service Check<small>&amp; Onboarding</small></h1>
+        <img src="/logo.png" alt="PCO" className="login-logo" />
+        <h1><small>Service Check &amp; Onboarding</small></h1>
         <ErrorBox error={err} />
         <Field label="Benutzername"><input value={u} onChange={(e) => setU(e.target.value)} autoFocus required /></Field>
         <Field label="Passwort"><input type="password" value={p} onChange={(e) => setP(e.target.value)} required /></Field>

@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../api";
+import { api, downloadPdf } from "../api";
 import { Asset, Onboarding, OnboardingItem, Section, SECTION_LABEL } from "../types";
 import { ErrorBox, Field, fmtDate, Modal, StatusPill, useAsync } from "../ui";
 
@@ -67,10 +67,12 @@ export default function OnboardingDetail() {
             {ob.service_check_id && <> · <Link to={`/checks/${ob.service_check_id}`}>Service Check ansehen</Link></>}</div>
         </div>
         <div className="row">
+          <button className="btn" onClick={() => run(() => downloadPdf(`/onboardings/${ob.id}/report.pdf`))}>PDF herunterladen</button>
+          <button className="btn" onClick={() => run(() => api(`/onboardings/${ob.id}/documents`, "POST"))}>PDF ablegen</button>
           {locked
             ? <button className="btn" onClick={() => run(() => api(`/onboardings/${ob.id}/reopen`, "POST"))}>Wieder öffnen</button>
             : <button className="btn primary" onClick={() => run(() => api(`/onboardings/${ob.id}/complete`, "POST"))}>Onboarding abschließen</button>}
-          <button className="btn ghost danger" onClick={() => confirm("Onboarding endgültig löschen?") && run(async () => { await api(`/onboardings/${ob.id}`, "DELETE"); nav("/onboardings"); })}>Löschen</button>
+          <button className="btn ghost danger" onClick={() => confirm("Onboarding samt abgelegter Dokumente endgültig löschen?") && run(async () => { await api(`/onboardings/${ob.id}`, "DELETE"); nav("/onboardings"); })}>Löschen</button>
         </div>
       </div>
       <ErrorBox error={err} />
@@ -115,6 +117,23 @@ export default function OnboardingDetail() {
           ))}
         </section>
       ))}
+
+      <section className="card">
+        <h2>Abgelegte Dokumente</h2>
+        <p className="muted">„PDF ablegen“ speichert den aktuellen Stand als unveränderliches Dokument bei diesem Onboarding. Beim Abschluss wird automatisch eines abgelegt.</p>
+        <table>
+          <tbody>
+            {ob.documents.map((d) => (
+              <tr key={d.id}>
+                <td><a href="#" onClick={(e) => { e.preventDefault(); run(() => downloadPdf(`/onboardings/${ob.id}/documents/${d.id}`)); }}>{d.filename}</a></td>
+                <td>{new Date(d.created_at).toLocaleString("de-DE")}</td><td>{d.created_by}</td><td>{Math.max(1, Math.round(d.size / 1024))} kB</td>
+                <td className="actions"><button className="btn ghost danger" onClick={() => confirm("Dokument löschen?") && run(() => api(`/onboardings/${ob.id}/documents/${d.id}`, "DELETE"))}>Löschen</button></td>
+              </tr>
+            ))}
+            {!ob.documents.length && <tr><td className="muted">Noch kein Dokument abgelegt.</td></tr>}
+          </tbody>
+        </table>
+      </section>
 
       {asset && (
         <Modal title={asset.id ? "Eintrag bearbeiten" : "Eintrag hinzufügen"} onClose={() => setAsset(null)}>

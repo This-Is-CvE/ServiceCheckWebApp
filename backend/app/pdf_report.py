@@ -1,4 +1,5 @@
 """PDF-Report zum Service Check (ReportLab)."""
+import os
 from io import BytesIO
 from xml.sax.saxutils import escape
 
@@ -7,7 +8,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import (KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle)
+from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table,
+                                TableStyle)
 
 from . import config
 
@@ -29,7 +31,8 @@ PRIORITY = {
 INK = colors.HexColor("#1f2933")
 MUTED = colors.HexColor("#5b6470")
 LINE = colors.HexColor("#d5d9de")
-BRAND = colors.HexColor("#1d4e89")
+BRAND = colors.HexColor("#0077a9")  # PCO-Blau
+LOGO = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
 
 
 def _styles():
@@ -60,15 +63,32 @@ def _light_drawing(light: str) -> Drawing:
     return d
 
 
-def _footer(canvas, doc):
-    canvas.saveState()
-    canvas.setFont("Helvetica", 7.5)
-    canvas.setFillColor(MUTED)
-    canvas.drawString(18 * mm, 10 * mm, f"{config.REPORT_COMPANY} – Service Check – vertraulich")
-    canvas.drawRightString(A4[0] - 18 * mm, 10 * mm, f"Seite {doc.page}")
-    canvas.setStrokeColor(LINE)
-    canvas.line(18 * mm, 14 * mm, A4[0] - 18 * mm, 14 * mm)
-    canvas.restoreState()
+def make_footer(label: str):
+    def _footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7.5)
+        canvas.setFillColor(MUTED)
+        canvas.drawString(18 * mm, 10 * mm, f"{config.REPORT_COMPANY} \u2013 {label} \u2013 vertraulich")
+        canvas.drawRightString(A4[0] - 18 * mm, 10 * mm, f"Seite {doc.page}")
+        canvas.setStrokeColor(LINE)
+        canvas.line(18 * mm, 14 * mm, A4[0] - 18 * mm, 14 * mm)
+        canvas.restoreState()
+    return _footer
+
+
+def header(title: str, st, width):
+    """Titelzeile mit Firmenlogo rechts (Logo-Datei: app/assets/logo.png)."""
+    cells = [_p(title, st["h1"]), ""]
+    if os.path.isfile(LOGO):
+        h = 15 * mm
+        img = Image(LOGO, width=h * 229 / 104, height=h)
+        img.hAlign = "RIGHT"
+        cells[1] = img
+    t = Table([cells], colWidths=[width - 40 * mm, 40 * mm])
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                           ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("LINEBELOW", (0, 0), (-1, 0), 1.2, BRAND),
+                           ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    return t
 
 
 def _bar(score, color) -> Drawing:
@@ -98,8 +118,7 @@ def build_report(check, result: dict) -> bytes:
     story = []
 
     # --- Kopf ---
-    story += [_p(config.REPORT_COMPANY, st["small"]), Spacer(1, 2 * mm),
-              _p("Service Check – Ergebnisbericht", st["h1"]), Spacer(1, 3 * mm)]
+    story += [header("Service Check \u2013 Ergebnisbericht", st, width), Spacer(1, 5 * mm)]
     created = check.created_at.strftime("%d.%m.%Y") if check.created_at else ""
     meta = [
         ["Kunde", check.customer.name], ["Managed Service Offer", check.offer_name], ["Produkt", check.product_name],
@@ -205,5 +224,6 @@ def build_report(check, result: dict) -> bytes:
     if block:
         story += block
 
-    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+    footer = make_footer("Service Check")
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
     return buf.getvalue()

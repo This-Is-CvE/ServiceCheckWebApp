@@ -7,6 +7,7 @@ from ..models import (Offer, Onboarding, OnboardingTemplateItem, Parameter, Prod
 from ..schemas import (OfferIn, OfferOut, ParameterIn, ParameterOut, ProductIn, ProductOut, TemplateItemIn,
                        TemplateItemOut)
 from ..security import admin_user, current_user
+from ..seed import default_template_items
 
 router = APIRouter(prefix="/api", tags=["catalog"])
 
@@ -45,6 +46,7 @@ def create_offer(body: OfferIn, db: Session = Depends(get_db), _: User = Depends
     if db.scalar(select(Offer).where(Offer.name == body.name)):
         raise HTTPException(409, "Offer existiert bereits")
     offer = Offer(**body.model_dump())
+    offer.template_items = default_template_items()  # Standard-Onboarding-Vorlage, danach frei anpassbar
     db.add(offer)
     db.commit()
     return _offer_out(db, offer)

@@ -160,6 +160,12 @@ ONBOARDING = [
 ]
 
 
+def default_template_items() -> list[OnboardingTemplateItem]:
+    return [OnboardingTemplateItem(section=sec, label=label, help=help_, field_type=ftype, required=req,
+                                   position=(n + 1) * 10)
+            for n, (sec, label, help_, ftype, req) in enumerate(ONBOARDING)]
+
+
 def seed_admin(db: Session) -> None:
     if not db.scalar(select(User).limit(1)):
         db.add(User(username=config.ADMIN_USER, full_name="Administrator", role="admin",
@@ -188,7 +194,5 @@ def seed_demo(db: Session) -> None:
     db.flush()
     _add_catalog(db, vs, VSPHERE)
     _add_catalog(db, hv, HYPERV)
-    for n, (section, label, help_, ftype, required) in enumerate(ONBOARDING):
-        db.add(OnboardingTemplateItem(offer_id=offer.id, section=section, label=label, help=help_,
-                                      field_type=ftype, required=required, position=(n + 1) * 10))
+    offer.template_items = default_template_items()
     db.commit()

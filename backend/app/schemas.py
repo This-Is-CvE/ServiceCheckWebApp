@@ -194,6 +194,14 @@ class AssetOut(AssetIn, ORM):
     id: int
 
 
+class DocumentOut(ORM):
+    id: int
+    filename: str
+    size: int
+    created_by: str
+    created_at: datetime
+
+
 class OnboardingListOut(ORM):
     id: int
     title: str
@@ -211,3 +219,4 @@ class OnboardingOut(OnboardingListOut):
     items: list[OnboardingItemOut]
     assets: list[AssetOut]
     open_required: list[str]
+    documents: list[DocumentOut]

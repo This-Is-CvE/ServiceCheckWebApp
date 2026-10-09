@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -146,6 +146,8 @@ class Onboarding(Base):
         cascade="all, delete-orphan", order_by="OnboardingItem.position, OnboardingItem.id")
     assets: Mapped[list["OnboardingAsset"]] = relationship(
         cascade="all, delete-orphan", order_by="OnboardingAsset.id")
+    documents: Mapped[list["OnboardingDocument"]] = relationship(
+        cascade="all, delete-orphan", order_by="OnboardingDocument.id.desc()")
 
 
 class OnboardingItem(Base):
@@ -174,3 +176,15 @@ class OnboardingAsset(Base):
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     location: Mapped[str] = mapped_column(String(200), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class OnboardingDocument(Base):
+    """Abgelegter PDF-Stand der Onboarding-Dokumentation (unveränderlicher Snapshot)."""
+    __tablename__ = "onboarding_documents"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    onboarding_id: Mapped[int] = mapped_column(ForeignKey("onboardings.id"))
+    filename: Mapped[str] = mapped_column(String(300))
+    content: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

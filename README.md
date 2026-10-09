@@ -57,10 +57,23 @@ cd backend && pytest
 | `DATABASE_URL` | SQLAlchemy-URL | `sqlite:///./servicecheck.db` |
 | `SECRET_KEY` | JWT-Signatur – **in Produktion setzen** | Dev-Wert |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | initialer Administrator (nur beim ersten Start) | `admin` / `admin` |
-| `REPORT_COMPANY` | Firmenname im PDF-Report | „Managed Service Provider" |
-| `SEED_DEMO_DATA` | Beispielkatalog anlegen, wenn noch kein Offer existiert (`0` = aus) | `1` |
+| `REPORT_COMPANY` | Firmenname in den PDF-Fußzeilen | „PCO" |
+| `SEED_DEMO_DATA` | `1` legt beim ersten Start einen Beispielkatalog an (vSphere/Hyper-V); sonst startet die App mit leerem Katalog | `0` |
 
-## Beispieldaten
+## Kataloge selbst anlegen
+
+Die App startet standardmäßig **ohne** Katalog. Als Administrator unter „Kataloge & Vorlagen": Offer anlegen → Produkt
+anlegen → Parameter hinzufügen (Kategorie, Prüffrage, Gewichtung, K.-o., Empfehlung; „Speichern & nächster" für
+schnelles Erfassen). Jedes neue Offer erhält eine Standard-Onboarding-Vorlage, die ebenfalls editierbar ist.
+
+## Onboarding-Dokument
+
+Jedes Onboarding lässt sich als PDF (mit Logo, allgemeinen Angaben, technischer Basis, Checklisten und
+Unterschriftenfeldern) herunterladen und für den Kunden verwenden. „PDF ablegen" speichert den aktuellen Stand als
+unveränderliches Dokument in der Datenbank beim Onboarding; beim Abschluss wird automatisch eines abgelegt.
+Das Logo liegt unter `backend/app/assets/logo.png` (PDF) und `frontend/public/logo.png` (Oberfläche).
+
+## Beispieldaten (optional, `SEED_DEMO_DATA=1`)
 
 Offer *Managed Virtual Infrastructure* mit *VMware vSphere (inkl. vSAN)* und *Microsoft Hyper-V (inkl. S2D und
 Azure Local)* – je rund 20–25 Parameter – sowie eine Onboarding-Vorlage. Gewichtungen, K.-o.-Kriterien und Texte sind
@@ -70,4 +83,4 @@ Vorschläge und sollten fachlich geprüft werden; alles ist in der App unter „
 
 * Schema wird per `create_all` angelegt, es gibt noch keine Migrationen (z. B. Alembic).
 * Nur lokale Benutzer (Rollen Administrator/Consultant); kein SSO, kein Kundenportal.
-* Der PDF-Report ist ein Layout in ReportLab ohne Firmenlogo; Logo/Farben lassen sich in `backend/app/pdf_report.py` anpassen.
+* Die PDF-Layouts sind in ReportLab umgesetzt (`backend/app/pdf_report.py`, `pdf_onboarding.py`) und lassen sich dort anpassen.

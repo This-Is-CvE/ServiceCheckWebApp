@@ -23,7 +23,8 @@ export type Section = "general" | "checklist" | "readiness";
 export interface OnboardingListItem { id: number; title: string; customer_id: number; customer_name: string; offer_name: string; status: "open" | "completed"; progress: number; created_at: string }
 export interface OnboardingItem { id: number; section: Section; label: string; help: string; field_type: "text" | "textarea" | "date"; required: boolean; value: string; done: boolean; comment: string }
 export interface Asset { id: number; category: string; name: string; product_version: string; quantity: number; location: string; notes: string }
-export interface Onboarding extends OnboardingListItem { service_check_id: number | null; completed_at: string | null; items: OnboardingItem[]; assets: Asset[]; open_required: string[] }
+export interface Doc { id: number; filename: string; size: number; created_by: string; created_at: string }
+export interface Onboarding extends OnboardingListItem { service_check_id: number | null; completed_at: string | null; items: OnboardingItem[]; assets: Asset[]; open_required: string[]; documents: Doc[] }
 
 export const ANSWER_LABEL: Record<Answer, string> = { yes: "Erfüllt", partial: "Teilweise", no: "Nicht erfüllt", na: "n. a." };
 export const LIGHT_LABEL: Record<Light, string> = { green: "Grün", yellow: "Gelb", red: "Rot", grey: "Offen" };

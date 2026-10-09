@@ -6,22 +6,23 @@ import { useUser } from "../App";
 
 type Tab = "params" | "template";
 
-function ParameterEditor({ product, admin }: { product: Product; admin: boolean }) {
+function ParameterEditor({ product, admin, onChanged }: { product: Product; admin: boolean; onChanged: () => void }) {
   const list = useAsync(() => api<Parameter[]>(`/products/${product.id}/parameters`), [product.id]);
   const [edit, setEdit] = useState<Partial<Parameter> | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const categories = [...new Set((list.data ?? []).map((p) => p.category))];
 
-  async function save(e: FormEvent) {
+  async function save(e: FormEvent, another = false) {
     e.preventDefault();
     try {
       await (edit!.id ? api(`/parameters/${edit!.id}`, "PUT", edit) : api(`/products/${product.id}/parameters`, "POST", edit));
-      setEdit(null); list.reload();
+      setEdit(another ? { category: edit!.category, name: "", description: "", weight: 5, is_blocker: false, recommendation: "" } : null);
+      list.reload(); onChanged();
     } catch (x: any) { setErr(x.message); }
   }
   async function remove(p: Parameter) {
     if (confirm(`Parameter „${p.name}“ löschen? Bestehende Checks bleiben unverändert.`)) {
-      await api(`/parameters/${p.id}`, "DELETE"); list.reload();
+      await api(`/parameters/${p.id}`, "DELETE"); list.reload(); onChanged();
     }
   }
   const total = (list.data ?? []).reduce((s, p) => s + p.weight, 0);
@@ -33,6 +34,7 @@ function ParameterEditor({ product, admin }: { product: Product; admin: boolean 
         {admin && <button className="btn" onClick={() => { setErr(null); setEdit({ category: categories[categories.length - 1] ?? "Allgemein", name: "", description: "", weight: 5, is_blocker: false, recommendation: "" }); }}>Parameter hinzufügen</button>}
       </div>
       <ErrorBox error={list.error} />
+      {list.data?.length === 0 && <p className="muted">{admin ? "Dieser Katalog ist noch leer. Lege mit „Parameter hinzufügen“ die technischen Prüfpunkte an." : "Dieser Katalog ist noch leer."}</p>}
       <table>
         <thead><tr><th>Parameter</th><th>Gew.</th><th>K.-o.</th><th>Empfehlung bei Abweichung</th>{admin && <th />}</tr></thead>
         <tbody>
@@ -64,7 +66,9 @@ function ParameterEditor({ product, admin }: { product: Product; admin: boolean 
               <label className="check-inline"><input type="checkbox" checked={!!edit.is_blocker} onChange={(e) => setEdit({ ...edit, is_blocker: e.target.checked })} /> K.-o.-Kriterium (Ampel Rot, wenn nicht erfüllt)</label>
             </div>
             <Field label="Empfehlung für das Vorprojekt bei Abweichung"><textarea rows={3} value={edit.recommendation ?? ""} onChange={(e) => setEdit({ ...edit, recommendation: e.target.value })} /></Field>
-            <div className="row end"><button type="button" className="btn" onClick={() => setEdit(null)}>Abbrechen</button><button className="btn primary">Speichern</button></div>
+            <div className="row end"><button type="button" className="btn" onClick={() => setEdit(null)}>Abbrechen</button>
+              {!edit.id && <button type="button" className="btn" onClick={(e) => (e.currentTarget.form as HTMLFormElement).reportValidity() && save(e as any, true)}>Speichern &amp; nächster</button>}
+              <button className="btn primary">Speichern</button></div>
           </form>
         </Modal>
       )}
@@ -164,6 +168,11 @@ export default function Catalog() {
         {admin && <button className="btn primary" onClick={() => { setErr(null); setDlg({ kind: "offer", data: { name: "", description: "" } }); }}>Neues Offer</button>}</div>
       {!admin && <p className="muted">Nur Administratoren können Kataloge ändern.</p>}
       <ErrorBox error={err || offers.error} />
+      {offers.data?.length === 0 && (
+        <section className="card"><h2>Noch kein Katalog vorhanden</h2>
+          <p>{admin ? "Lege zuerst ein Managed Service Offer an, dann die Produkte und danach die Parameter des Prüfkatalogs." : "Ein Administrator muss zuerst Offers und Kataloge anlegen."}</p>
+          {admin && <button className="btn primary" onClick={() => { setErr(null); setDlg({ kind: "offer", data: { name: "", description: "" } }); }}>Erstes Offer anlegen</button>}</section>
+      )}
       <div className="tabs">
         {(offers.data ?? []).map((o) => (
           <button key={o.id} className={o.id === offer?.id ? "active" : ""} onClick={() => { setOfferId(o.id); setProductId(null); }}>{o.name}</button>
@@ -191,7 +200,7 @@ export default function Catalog() {
                   {admin && <div className="row"><button className="btn ghost" onClick={() => { setErr(null); setDlg({ kind: "product", data: { ...product } }); }}>Produkt &amp; Schwellwerte</button>
                     <button className="btn ghost danger" onClick={() => del("products", product.id, product.name)}>Löschen</button></div>}
                 </div>
-                <ParameterEditor product={product} admin={admin} />
+                <ParameterEditor product={product} admin={admin} onChanged={offers.reload} />
               </>
             ) : <p className="muted">Dieses Offer hat noch kein Produkt.</p>}
         </section>

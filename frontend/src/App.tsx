@@ -28,7 +28,7 @@ function Shell() {
     <AuthCtx.Provider value={user}>
       <div className="layout">
         <aside className="side">
-          <div className="brand">Service Check<small>&amp; Onboarding</small></div>
+          <div className="brand"><img src="/logo.png" alt="PCO" /><small>Service Check &amp; Onboarding</small></div>
           <nav>
             <NavLink to="/" end>Übersicht</NavLink>
             <div className="nav-group">Modul 1</div>

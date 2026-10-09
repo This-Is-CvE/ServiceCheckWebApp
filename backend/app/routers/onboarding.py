@@ -1,15 +1,18 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Customer, Offer, Onboarding, OnboardingAsset, OnboardingItem, ServiceCheck, User
+from ..models import (Customer, Offer, Onboarding, OnboardingAsset, OnboardingDocument, OnboardingItem,
+                      ServiceCheck, User)
+from ..pdf_onboarding import build_onboarding_report
 from ..schemas import AssetIn, OnboardingCreate, OnboardingItemUpdate, OnboardingListOut, OnboardingOut
 from ..security import current_user
 
-router = APIRouter(prefix="/api/onboardings", tags=["onboarding"])
+router = APIRouter(prefix="/api", tags=["onboarding"])
 
 
 def _is_done(item: OnboardingItem) -> bool:
@@ -32,7 +35,8 @@ def _list_out(ob: Onboarding) -> dict:
 
 def _out(ob: Onboarding) -> OnboardingOut:
     return OnboardingOut(**_list_out(ob), service_check_id=ob.service_check_id, completed_at=ob.completed_at,
-                         items=ob.items, assets=ob.assets, open_required=_open_required(ob))
+                         items=ob.items, assets=ob.assets, open_required=_open_required(ob),
+                         documents=ob.documents)
 
 
 def _get(db: Session, id_: int) -> Onboarding:
@@ -47,12 +51,12 @@ def _writable(ob: Onboarding) -> None:
         raise HTTPException(409, "Abgeschlossene Onboardings sind schreibgeschützt")
 
 
-@router.get("", response_model=list[OnboardingListOut])
+@router.get("/onboardings", response_model=list[OnboardingListOut])
 def list_onboardings(db: Session = Depends(get_db), _: User = Depends(current_user)):
     return [_list_out(o) for o in db.scalars(select(Onboarding).order_by(Onboarding.created_at.desc()))]
 
 
-@router.post("", response_model=OnboardingOut, status_code=201)
+@router.post("/onboardings", response_model=OnboardingOut, status_code=201)
 def create_onboarding(body: OnboardingCreate, db: Session = Depends(get_db), _: User = Depends(current_user)):
     customer, offer = db.get(Customer, body.customer_id), db.get(Offer, body.offer_id)
     if not customer or not offer:
@@ -70,12 +74,12 @@ def create_onboarding(body: OnboardingCreate, db: Session = Depends(get_db), _: 
     return _out(ob)
 
 
-@router.get("/{ob_id}", response_model=OnboardingOut)
+@router.get("/onboardings/{ob_id}", response_model=OnboardingOut)
 def get_onboarding(ob_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
     return _out(_get(db, ob_id))
 
 
-@router.put("/{ob_id}/items/{item_id}", response_model=OnboardingOut)
+@router.put("/onboardings/{ob_id}/items/{item_id}", response_model=OnboardingOut)
 def update_item(ob_id: int, item_id: int, body: OnboardingItemUpdate, db: Session = Depends(get_db),
                 _: User = Depends(current_user)):
     ob = _get(db, ob_id)
@@ -90,7 +94,7 @@ def update_item(ob_id: int, item_id: int, body: OnboardingItemUpdate, db: Sessio
     return _out(ob)
 
 
-@router.post("/{ob_id}/assets", response_model=OnboardingOut, status_code=201)
+@router.post("/onboardings/{ob_id}/assets", response_model=OnboardingOut, status_code=201)
 def add_asset(ob_id: int, body: AssetIn, db: Session = Depends(get_db), _: User = Depends(current_user)):
     ob = _get(db, ob_id)
     _writable(ob)
@@ -99,7 +103,7 @@ def add_asset(ob_id: int, body: AssetIn, db: Session = Depends(get_db), _: User 
     return _out(ob)
 
 
-@router.put("/{ob_id}/assets/{asset_id}", response_model=OnboardingOut)
+@router.put("/onboardings/{ob_id}/assets/{asset_id}", response_model=OnboardingOut)
 def update_asset(ob_id: int, asset_id: int, body: AssetIn, db: Session = Depends(get_db),
                  _: User = Depends(current_user)):
     ob = _get(db, ob_id)
@@ -113,7 +117,7 @@ def update_asset(ob_id: int, asset_id: int, body: AssetIn, db: Session = Depends
     return _out(ob)
 
 
-@router.delete("/{ob_id}/assets/{asset_id}", response_model=OnboardingOut)
+@router.delete("/onboardings/{ob_id}/assets/{asset_id}", response_model=OnboardingOut)
 def delete_asset(ob_id: int, asset_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
     ob = _get(db, ob_id)
     _writable(ob)
@@ -125,18 +129,19 @@ def delete_asset(ob_id: int, asset_id: int, db: Session = Depends(get_db), _: Us
     return _out(ob)
 
 
-@router.post("/{ob_id}/complete", response_model=OnboardingOut)
-def complete(ob_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+@router.post("/onboardings/{ob_id}/complete", response_model=OnboardingOut)
+def complete(ob_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     ob = _get(db, ob_id)
     missing = _open_required(ob)
     if missing:
         raise HTTPException(422, f"{len(missing)} Pflichtpunkte sind noch offen: " + "; ".join(missing[:5]))
     ob.status, ob.completed_at = "completed", datetime.now(timezone.utc)
+    _file_document(db, ob, user)
     db.commit()
     return _out(ob)
 
 
-@router.post("/{ob_id}/reopen", response_model=OnboardingOut)
+@router.post("/onboardings/{ob_id}/reopen", response_model=OnboardingOut)
 def reopen(ob_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
     ob = _get(db, ob_id)
     ob.status, ob.completed_at = "open", None
@@ -144,7 +149,61 @@ def reopen(ob_id: int, db: Session = Depends(get_db), _: User = Depends(current_
     return _out(ob)
 
 
-@router.delete("/{ob_id}", status_code=204)
+@router.delete("/onboardings/{ob_id}", status_code=204)
 def delete_onboarding(ob_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
     db.delete(_get(db, ob_id))
     db.commit()
+
+
+# ----- PDF-Dokument -----
+def _file_document(db: Session, ob: Onboarding, user: User) -> OnboardingDocument:
+    pdf = build_onboarding_report(ob)
+    doc = OnboardingDocument(filename=_filename(ob), content=pdf, size=len(pdf),
+                             created_by=user.full_name or user.username)
+    ob.documents.insert(0, doc)
+    return doc
+
+
+def _filename(ob: Onboarding) -> str:
+    raw = f"Onboarding_{ob.customer.name}_{ob.offer_name}_{datetime.now().strftime('%Y-%m-%d_%H%M')}"
+    return "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in raw) + ".pdf"
+
+
+def _pdf_response(content: bytes, filename: str) -> Response:
+    return Response(content, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/onboardings/{ob_id}/report.pdf")
+def report(ob_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    """Aktuellen Stand als PDF erzeugen (ohne Ablage), z. B. zum Versand an den Kunden."""
+    ob = _get(db, ob_id)
+    return _pdf_response(build_onboarding_report(ob), _filename(ob))
+
+
+@router.post("/onboardings/{ob_id}/documents", response_model=OnboardingOut, status_code=201)
+def file_document(ob_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Aktuellen Stand als PDF erzeugen und beim Onboarding ablegen."""
+    ob = _get(db, ob_id)
+    _file_document(db, ob, user)
+    db.commit()
+    return _out(ob)
+
+
+@router.get("/onboardings/{ob_id}/documents/{doc_id}")
+def download_document(ob_id: int, doc_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    doc = db.get(OnboardingDocument, doc_id)
+    if not doc or doc.onboarding_id != ob_id:
+        raise HTTPException(404, "Dokument nicht gefunden")
+    return _pdf_response(doc.content, doc.filename)
+
+
+@router.delete("/onboardings/{ob_id}/documents/{doc_id}", response_model=OnboardingOut)
+def delete_document(ob_id: int, doc_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    ob = _get(db, ob_id)
+    doc = next((d for d in ob.documents if d.id == doc_id), None)
+    if not doc:
+        raise HTTPException(404, "Dokument nicht gefunden")
+    ob.documents.remove(doc)
+    db.commit()
+    return _out(ob)

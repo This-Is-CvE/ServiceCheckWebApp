@@ -4,7 +4,8 @@ import tempfile
 
 _tmp = tempfile.mkdtemp()
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
-os.environ["SECRET_KEY"] = "test"
+os.environ["SECRET_KEY"] = "test" * 10
+os.environ["SEED_DEMO_DATA"] = "1"
 os.environ["ADMIN_PASSWORD"] = "adminpass"
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 

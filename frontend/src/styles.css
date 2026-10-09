@@ -1,11 +1,11 @@
 :root {
   --bg: #f3f5f8; --card: #fff; --ink: #1f2933; --muted: #637083; --line: #dde2e8;
-  --brand: #1d4e89; --brand-ink: #fff;
+  --brand: #0077a9; --brand-ink: #fff;
   --green: #2e9e4f; --yellow: #e0a800; --red: #c8372d; --orange: #d9731a;
   --radius: 8px;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #14181d; --card: #1c2128; --ink: #e6eaee; --muted: #93a0af; --line: #2d353f; --brand: #6aa6e8; --brand-ink: #0d1520; }
+  :root { --bg: #14181d; --card: #1c2128; --ink: #e6eaee; --muted: #93a0af; --line: #2d353f; --brand: #4db8e6; --brand-ink: #0d1520; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
@@ -15,8 +15,8 @@ small { font-size: 12px; } .block { display: block; } .muted { color: var(--mute
 .center { min-height: 100vh; display: grid; place-items: center; }
 
 .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
-.side { background: #16324f; color: #e9eff6; display: flex; flex-direction: column; padding: 16px 12px; position: sticky; top: 0; height: 100vh; }
-.brand { font-weight: 700; font-size: 17px; padding: 4px 8px 16px; } .brand small { display: block; font-weight: 400; opacity: .7; }
+.side { background: #0b3a52; color: #e9eff6; display: flex; flex-direction: column; padding: 16px 12px; position: sticky; top: 0; height: 100vh; }
+.brand { padding: 4px 4px 16px; } .brand img { display: block; width: 100%; max-width: 150px; background: #fff; border-radius: 8px; padding: 8px 12px; } .brand small { display: block; margin-top: 8px; opacity: .7; font-size: 12px; }
 .side nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .side nav a { color: inherit; padding: 7px 10px; border-radius: 6px; } .side nav a:hover { background: rgba(255,255,255,.08); text-decoration: none; }
 .side nav a.active { background: rgba(255,255,255,.16); font-weight: 600; }
@@ -98,7 +98,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .tabs button.active { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
 .tabs.sub { border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-top: 10px; } .tabs button.add { border-style: dashed; color: var(--muted); }
 
-.login { width: 340px; } .login h1 small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); } .login .btn { width: 100%; margin-top: 6px; }
+.login { width: 340px; } .login-logo { display: block; width: 150px; margin: 0 auto 6px; } .login h1 { text-align: center; } .login h1 small { font-size: 13px; font-weight: 400; color: var(--muted); } .login .btn { width: 100%; margin-top: 6px; }
 
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; } .side { position: static; height: auto; } .side nav { flex-direction: row; flex-wrap: wrap; }
