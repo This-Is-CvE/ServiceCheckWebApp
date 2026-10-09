@@ -64,3 +64,22 @@ export function StatusPill({ status }: { status: string }) {
   const map: Record<string, string> = { draft: "Entwurf", completed: "Abgeschlossen", open: "Offen" };
   return <span className={`pill ${status}`}>{map[status] ?? status}</span>;
 }
+
+/** Auswahl der Erweiterungskataloge eines Produkts (nur sichtbar, wenn das Produkt Erweiterungen hat). */
+export function ExtensionPicker({ extensions, selected, onChange, disabled }: {
+  extensions: { id: number; name: string; description?: string }[]; selected: number[]; onChange: (ids: number[]) => void; disabled?: boolean;
+}) {
+  if (!extensions.length) return null;
+  return (
+    <fieldset className="ext-picker" disabled={disabled}>
+      <legend>Erweiterungen (Deployment-Typ)</legend>
+      {extensions.map((e) => (
+        <label key={e.id} className="check-inline">
+          <input type="checkbox" checked={selected.includes(e.id)}
+            onChange={(ev) => onChange(ev.target.checked ? [...selected, e.id] : selected.filter((x) => x !== e.id))} />
+          <span>{e.name}{e.description && <small className="muted"> – {e.description}</small>}</span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}

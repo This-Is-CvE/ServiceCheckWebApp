@@ -44,7 +44,7 @@ export default function Dashboard() {
             <tbody>
               {o.slice(0, 6).map((x) => (
                 <tr key={x.id}>
-                  <td><Link to={`/onboardings/${x.id}`}>{x.customer_name}</Link><small className="block muted">{x.offer_name} · {fmtDate(x.created_at)}</small></td>
+                  <td><Link to={`/onboardings/${x.id}`}>{x.customer_name}</Link><small className="block muted">{x.product_name || x.offer_name} · {fmtDate(x.created_at)}</small></td>
                   <td style={{ width: 120 }}><div className="bar"><i style={{ width: `${x.progress}%` }} /></div></td>
                   <td><StatusPill status={x.status} /></td>
                 </tr>

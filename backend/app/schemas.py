@@ -34,6 +34,7 @@ class UserUpdate(BaseModel):
 
 # ----- Katalog -----
 class ParameterIn(BaseModel):
+    extension_id: int | None = None  # None = Basiskatalog des Produkts
     category: str = Field(default="Allgemein", max_length=200)
     name: str = Field(min_length=1, max_length=300)
     description: str = ""
@@ -55,10 +56,22 @@ class ProductIn(BaseModel):
     yellow_min: float = Field(default=50, ge=0, le=100)
 
 
+class ExtensionIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = ""
+
+
+class ExtensionOut(ExtensionIn, ORM):
+    id: int
+    product_id: int
+    parameter_count: int = 0
+
+
 class ProductOut(ProductIn, ORM):
     id: int
     offer_id: int
-    parameter_count: int = 0
+    parameter_count: int = 0  # Basiskatalog
+    extensions: list[ExtensionOut] = []
 
 
 class OfferIn(BaseModel):
@@ -74,6 +87,7 @@ class OfferOut(OfferIn, ORM):
 # ----- Kunden -----
 class CustomerIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    kt_number: str = Field(default="", max_length=50)
     contact_name: str = ""
     contact_email: str = ""
     notes: str = ""
@@ -90,8 +104,13 @@ Answer = Literal["yes", "partial", "no", "na"]
 class CheckCreate(BaseModel):
     customer_id: int
     product_id: int
+    extension_ids: list[int] = []
     title: str = ""
     system_description: str = ""
+
+
+class ExtensionSelection(BaseModel):
+    extension_ids: list[int] = []
 
 
 class CheckUpdate(BaseModel):
@@ -107,6 +126,8 @@ class CheckItemUpdate(BaseModel):
 class CheckItemOut(ORM):
     id: int
     category: str
+    extension_name: str | None
+    section: str
     name: str
     description: str
     weight: int
@@ -119,8 +140,10 @@ class CheckItemOut(ORM):
 class CheckListOut(ORM):
     id: int
     title: str
+    product_id: int | None
     customer_id: int
     customer_name: str
+    customer_kt_number: str
     offer_name: str
     product_name: str
     status: str
@@ -132,6 +155,7 @@ class CheckListOut(ORM):
 
 class CheckOut(CheckListOut):
     system_description: str
+    extensions: list[dict]
     green_min: float
     yellow_min: float
     created_by: str | None
@@ -144,6 +168,7 @@ Section = Literal["general", "checklist", "readiness"]
 
 
 class TemplateItemIn(BaseModel):
+    extension_id: int | None = None  # None = Basisvorlage des Produkts
     section: Section
     label: str = Field(min_length=1, max_length=300)
     help: str = ""
@@ -154,12 +179,13 @@ class TemplateItemIn(BaseModel):
 
 class TemplateItemOut(TemplateItemIn, ORM):
     id: int
-    offer_id: int
+    product_id: int
 
 
 class OnboardingCreate(BaseModel):
     customer_id: int
-    offer_id: int
+    product_id: int
+    extension_ids: list[int] = []
     title: str = ""
     service_check_id: int | None = None
 
@@ -172,6 +198,7 @@ class OnboardingItemUpdate(BaseModel):
 
 class OnboardingItemOut(ORM):
     id: int
+    extension_name: str | None
     section: str
     label: str
     help: str
@@ -185,6 +212,8 @@ class OnboardingItemOut(ORM):
 class AssetIn(BaseModel):
     category: str = "Server"
     name: str = Field(min_length=1, max_length=300)
+    model: str = ""
+    serial_number: str = ""
     product_version: str = ""
     quantity: int = Field(default=1, ge=1)
     location: str = ""
@@ -192,6 +221,19 @@ class AssetIn(BaseModel):
 
 
 class AssetOut(AssetIn, ORM):
+    id: int
+
+
+class ContactIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    role: str = ""
+    phone: str = ""
+    mobile: str = ""
+    email: str = ""
+    notes: str = ""
+
+
+class ContactOut(ContactIn, ORM):
     id: int
 
 
@@ -206,9 +248,12 @@ class DocumentOut(ORM):
 class OnboardingListOut(ORM):
     id: int
     title: str
+    product_id: int | None
     customer_id: int
     customer_name: str
+    customer_kt_number: str
     offer_name: str
+    product_name: str
     status: str
     progress: float
     created_at: datetime
@@ -216,8 +261,10 @@ class OnboardingListOut(ORM):
 
 class OnboardingOut(OnboardingListOut):
     service_check_id: int | None
+    extensions: list[dict]
     completed_at: datetime | None
     items: list[OnboardingItemOut]
     assets: list[AssetOut]
+    contacts: list[ContactOut]
     open_required: list[str]
     documents: list[DocumentOut]

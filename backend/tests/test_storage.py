@@ -27,9 +27,9 @@ def blob(monkeypatch):
 
 
 def test_documents_go_to_blob_storage_and_not_into_db(client, auth, blob):
-    offer = client.get("/api/offers", headers=auth).json()[0]
+    product = client.get("/api/offers", headers=auth).json()[0]["products"][0]
     cust = client.post("/api/customers", json={"name": "Blob GmbH"}, headers=auth).json()
-    ob = client.post("/api/onboardings", json={"customer_id": cust["id"], "offer_id": offer["id"]}, headers=auth).json()
+    ob = client.post("/api/onboardings", json={"customer_id": cust["id"], "product_id": product["id"]}, headers=auth).json()
 
     filed = client.post(f"/api/onboardings/{ob['id']}/documents", headers=auth).json()
     doc = filed["documents"][0]
@@ -49,9 +49,9 @@ def test_documents_go_to_blob_storage_and_not_into_db(client, auth, blob):
 
 
 def test_documents_filed_in_db_stay_readable_after_switching_backend(client, auth, monkeypatch):
-    offer = client.get("/api/offers", headers=auth).json()[0]
+    product = client.get("/api/offers", headers=auth).json()[0]["products"][0]
     cust = client.post("/api/customers", json={"name": "Wechsel GmbH"}, headers=auth).json()
-    ob = client.post("/api/onboardings", json={"customer_id": cust["id"], "offer_id": offer["id"]}, headers=auth).json()
+    ob = client.post("/api/onboardings", json={"customer_id": cust["id"], "product_id": product["id"]}, headers=auth).json()
     doc = client.post(f"/api/onboardings/{ob['id']}/documents", headers=auth).json()["documents"][0]  # Backend "db"
     monkeypatch.setattr(config, "STORAGE_BACKEND", "azure")
     assert client.get(f"/api/onboardings/{ob['id']}/documents/{doc['id']}", headers=auth).content.startswith(b"%PDF")

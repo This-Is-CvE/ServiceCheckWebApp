@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -28,15 +28,13 @@ class User(Base):
 # ---------- Katalog ----------
 
 class Offer(Base):
-    """Managed Service Offer, z. B. 'Managed Virtual Infrastructure'."""
+    """Managed Service, z. B. 'Managed Virtual Infrastructure'."""
     __tablename__ = "offers"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200), unique=True)
     description: Mapped[str] = mapped_column(Text, default="")
     products: Mapped[list["Product"]] = relationship(
         back_populates="offer", cascade="all, delete-orphan", order_by="Product.name")
-    template_items: Mapped[list["OnboardingTemplateItem"]] = relationship(
-        cascade="all, delete-orphan", order_by="OnboardingTemplateItem.position")
 
 
 class Product(Base):
@@ -49,14 +47,33 @@ class Product(Base):
     green_min: Mapped[float] = mapped_column(Float, default=80)
     yellow_min: Mapped[float] = mapped_column(Float, default=50)
     offer: Mapped[Offer] = relationship(back_populates="products")
-    parameters: Mapped[list["Parameter"]] = relationship(
+    parameters: Mapped[list["Parameter"]] = relationship(  # Basiskatalog und alle Erweiterungen
         back_populates="product", cascade="all, delete-orphan", order_by="Parameter.position, Parameter.id")
+    extensions: Mapped[list["ProductExtension"]] = relationship(
+        cascade="all, delete-orphan", order_by="ProductExtension.position, ProductExtension.id")
+    template_items: Mapped[list["OnboardingTemplateItem"]] = relationship(
+        cascade="all, delete-orphan", order_by="OnboardingTemplateItem.position, OnboardingTemplateItem.id")
+
+    @property
+    def base_parameters(self):
+        return [p for p in self.parameters if p.extension_id is None]
+
+
+class ProductExtension(Base):
+    """Erweiterungskatalog zu einem Produkt, z. B. vSAN oder S2D. Wird nur geprüft, wenn ausgewählt."""
+    __tablename__ = "product_extensions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text, default="")
+    position: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Parameter(Base):
     __tablename__ = "parameters"
     id: Mapped[int] = mapped_column(primary_key=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    extension_id: Mapped[int | None] = mapped_column(ForeignKey("product_extensions.id"), nullable=True)  # None = Basiskatalog
     category: Mapped[str] = mapped_column(String(200), default="Allgemein")
     name: Mapped[str] = mapped_column(String(300))
     description: Mapped[str] = mapped_column(Text, default="")
@@ -73,6 +90,7 @@ class Customer(Base):
     __tablename__ = "customers"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
+    kt_number: Mapped[str] = mapped_column(String(50), default="")
     contact_name: Mapped[str] = mapped_column(String(200), default="")
     contact_email: Mapped[str] = mapped_column(String(200), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
@@ -89,6 +107,7 @@ class ServiceCheck(Base):
     product_name: Mapped[str] = mapped_column(String(200))
     title: Mapped[str] = mapped_column(String(300))
     system_description: Mapped[str] = mapped_column(Text, default="")
+    extensions: Mapped[list] = mapped_column(JSON, default=list)  # [{"id": 1, "name": "vSAN"}], Stand beim Auswählen
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | completed
     green_min: Mapped[float] = mapped_column(Float, default=80)
     yellow_min: Mapped[float] = mapped_column(Float, default=50)
@@ -116,8 +135,13 @@ class CheckItem(Base):
     is_blocker: Mapped[bool] = mapped_column(Boolean, default=False)
     recommendation: Mapped[str] = mapped_column(Text, default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
+    extension_name: Mapped[str | None] = mapped_column(String(200), nullable=True)  # None = Basiskatalog
     answer: Mapped[str | None] = mapped_column(String(10), nullable=True)  # yes | partial | no | na
     comment: Mapped[str] = mapped_column(Text, default="")
+
+    @property
+    def section(self) -> str:
+        return f"{self.extension_name} \u203a {self.category}" if self.extension_name else self.category
 
 
 # ---------- Onboarding (Modul 2) ----------
@@ -125,7 +149,8 @@ class CheckItem(Base):
 class OnboardingTemplateItem(Base):
     __tablename__ = "onboarding_template_items"
     id: Mapped[int] = mapped_column(primary_key=True)
-    offer_id: Mapped[int] = mapped_column(ForeignKey("offers.id"))
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    extension_id: Mapped[int | None] = mapped_column(ForeignKey("product_extensions.id"), nullable=True)
     section: Mapped[str] = mapped_column(String(20))  # general | checklist | readiness
     label: Mapped[str] = mapped_column(String(300))
     help: Mapped[str] = mapped_column(Text, default="")
@@ -140,6 +165,9 @@ class Onboarding(Base):
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
     offer_id: Mapped[int | None] = mapped_column(ForeignKey("offers.id"), nullable=True)
     offer_name: Mapped[str] = mapped_column(String(200))
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), nullable=True)
+    product_name: Mapped[str] = mapped_column(String(200), default="")
+    extensions: Mapped[list] = mapped_column(JSON, default=list)  # [{"id": 1, "name": "vSAN"}]
     service_check_id: Mapped[int | None] = mapped_column(ForeignKey("service_checks.id"), nullable=True)
     title: Mapped[str] = mapped_column(String(300))
     status: Mapped[str] = mapped_column(String(20), default="open")  # open | completed
@@ -151,6 +179,8 @@ class Onboarding(Base):
         cascade="all, delete-orphan", order_by="OnboardingItem.position, OnboardingItem.id")
     assets: Mapped[list["OnboardingAsset"]] = relationship(
         cascade="all, delete-orphan", order_by="OnboardingAsset.id")
+    contacts: Mapped[list["OnboardingContact"]] = relationship(
+        cascade="all, delete-orphan", order_by="OnboardingContact.id")
     documents: Mapped[list["OnboardingDocument"]] = relationship(
         cascade="all, delete-orphan", order_by="OnboardingDocument.id.desc()")
 
@@ -165,6 +195,7 @@ class OnboardingItem(Base):
     field_type: Mapped[str] = mapped_column(String(20), default="text")
     required: Mapped[bool] = mapped_column(Boolean, default=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    extension_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     value: Mapped[str] = mapped_column(Text, default="")
     done: Mapped[bool] = mapped_column(Boolean, default=False)
     comment: Mapped[str] = mapped_column(Text, default="")
@@ -177,9 +208,24 @@ class OnboardingAsset(Base):
     onboarding_id: Mapped[int] = mapped_column(ForeignKey("onboardings.id"))
     category: Mapped[str] = mapped_column(String(100), default="Server")
     name: Mapped[str] = mapped_column(String(300))
+    model: Mapped[str] = mapped_column(String(200), default="")
+    serial_number: Mapped[str] = mapped_column(String(200), default="")
     product_version: Mapped[str] = mapped_column(String(200), default="")
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     location: Mapped[str] = mapped_column(String(200), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class OnboardingContact(Base):
+    """Ansprechpartner des Kunden im Onboarding."""
+    __tablename__ = "onboarding_contacts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    onboarding_id: Mapped[int] = mapped_column(ForeignKey("onboardings.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    role: Mapped[str] = mapped_column(String(200), default="")
+    phone: Mapped[str] = mapped_column(String(100), default="")
+    mobile: Mapped[str] = mapped_column(String(100), default="")
+    email: Mapped[str] = mapped_column(String(200), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
 
 

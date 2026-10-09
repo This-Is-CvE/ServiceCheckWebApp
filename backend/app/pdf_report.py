@@ -121,7 +121,9 @@ def build_report(check, result: dict) -> bytes:
     story += [header("Service Check \u2013 Ergebnisbericht", st, width), Spacer(1, 5 * mm)]
     created = check.created_at.strftime("%d.%m.%Y") if check.created_at else ""
     meta = [
-        ["Kunde", check.customer.name], ["Managed Service Offer", check.offer_name], ["Produkt", check.product_name],
+        ["Kunde", check.customer.name + (f"  (KT-Nummer {check.customer.kt_number})" if check.customer.kt_number else "")],
+        ["Managed Service", check.offer_name], ["Produkt", check.product_name],
+        ["Erweiterungen", ", ".join(e["name"] for e in check.extensions) or "\u2013"],
         ["Bezeichnung", check.title], ["Erstellt am", created],
         ["Bearbeiter", (check.created_by.full_name or check.created_by.username) if check.created_by else "–"],
         ["Status", "Abgeschlossen" if check.status == "completed" else "Entwurf (nicht abgeschlossen)"],
@@ -138,10 +140,10 @@ def build_report(check, result: dict) -> bytes:
         _p(f"Gesamtscore: {score_txt}", st["h3"]),
         _p(verdict, st["body"]), Spacer(1, 2 * mm),
         _p(f"Schwellwerte: Grün ab {check.green_min:.0f} %, Gelb ab {check.yellow_min:.0f} %. "
-           "Ein nicht erfüllter K.-o.-Parameter führt unabhängig vom Score zu Rot.", st["small"]),
+           "Ein nicht erfüllter K.O.-Parameter führt unabhängig vom Score zu Rot.", st["small"]),
     ]
     if result["blocker_failed"]:
-        verdict_block += [Spacer(1, 2 * mm), _p("K.-o.-Kriterien nicht erfüllt:", st["h3"])]
+        verdict_block += [Spacer(1, 2 * mm), _p("K.O.-Kriterien nicht erfüllt:", st["h3"])]
         verdict_block += [_p("• " + n, st["cell"]) for n in result["blocker_failed"]]
     if not result["complete"]:
         verdict_block += [Spacer(1, 2 * mm),
@@ -191,7 +193,7 @@ def build_report(check, result: dict) -> bytes:
                                    st["h3"]))
             rows = [[_p("Befund", st["small"]), _p("Status", st["small"]), _p("Empfohlene Maßnahme", st["small"])]]
             for f in group:
-                detail = [_p(f["name"] + ("  [K.-o.]" if f["is_blocker"] else ""), st["cell"]),
+                detail = [_p(f["name"] + ("  [K.O.]" if f["is_blocker"] else ""), st["cell"]),
                           _p(f["category"], st["small"])]
                 if f["comment"]:
                     detail.append(_p("Notiz: " + f["comment"], st["small"]))
@@ -213,7 +215,7 @@ def build_report(check, result: dict) -> bytes:
                 story += block[2:]
             current = it.category
             block = [_p(current, st["h3"])]
-        rows = [[_p(it.name + ("  [K.-o.]" if it.is_blocker else ""), st["cell"]),
+        rows = [[_p(it.name + ("  [K.O.]" if it.is_blocker else ""), st["cell"]),
                  _p(f"Gewicht {it.weight}", st["small"]), _p(ANSWER_LABEL[it.answer], st["cell"])]]
         if it.comment:
             rows.append([_p("Notiz: " + it.comment, st["small"]), "", ""])

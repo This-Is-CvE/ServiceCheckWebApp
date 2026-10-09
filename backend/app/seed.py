@@ -1,13 +1,13 @@
-"""Beispielinhalte: Offer 'Managed Virtual Infrastructure' mit vSphere- und Hyper-V-Katalog
-sowie einer Onboarding-Vorlage. Alles ist in der App editierbar."""
+"""Beispielinhalte: Managed Service 'Managed Virtual Infrastructure' mit vSphere- und Hyper-V-Katalog
+(Basiskatalog plus Erweiterungen) und Onboarding-Vorlagen. Alles ist in der App editierbar."""
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import config
-from .models import Offer, OnboardingTemplateItem, Parameter, Product, User
+from .models import Offer, OnboardingTemplateItem, Parameter, Product, ProductExtension, User
 from .security import hash_password
 
-# (Kategorie, Name, Beschreibung, Gewicht, K.-o., Empfehlung)
+# (Kategorie, Name, Beschreibung, Gewicht, K.O., Empfehlung)  – Basiskatalog VMware vSphere
 VSPHERE = [
     ("Lizenz & Support", "Gültiger Hersteller-Support (SnS/Subscription) für vCenter und ESXi",
      "Support-Vertrag und Lizenzschlüssel sind gültig und dem Kunden zugeordnet.", 8, True,
@@ -38,13 +38,6 @@ VSPHERE = [
      "Redundante Uplinks und getrennte Switches herstellen."),
     ("Architektur & Verfügbarkeit", "Zeit- und Namensauflösung (NTP, DNS) sind korrekt, Zertifikate gültig",
      "", 4, False, "NTP/DNS korrigieren und abgelaufene Zertifikate erneuern."),
-    ("vSAN", "vSAN-Health ist ohne Warnungen/Fehler",
-     "Nur bewerten, wenn vSAN eingesetzt wird; sonst 'Nicht anwendbar'.", 8, False,
-     "Offene vSAN-Health-Findings beheben, bevor der Betrieb übernommen wird."),
-    ("vSAN", "Storage-Policies bieten Ausfalltoleranz (FTT >= 1) für alle produktiven VMs",
-     "Keine VMs mit FTT=0.", 8, True, "Storage-Policies anpassen und Rebalancing/Resync einplanen."),
-    ("vSAN", "Freie vSAN-Kapazität beträgt mind. 30 % (Slack Space)",
-     "", 6, False, "Kapazität erweitern oder Daten bereinigen."),
     ("Storage", "Datastore-Auslastung liegt unter 80 % und Multipathing ist redundant",
      "Gilt für klassische SAN/NAS-Datastores.", 5, False,
      "Datastores erweitern bzw. bereinigen und Pfadredundanz herstellen."),
@@ -69,6 +62,18 @@ VSPHERE = [
      "", 5, False, "Fehlende Dokumentation im Vorprojekt erstellen (Ist-Aufnahme)."),
 ]
 
+# Erweiterung VMware vSAN
+VSAN = [
+    ("Health & Betrieb", "vSAN-Health ist ohne Warnungen/Fehler",
+     "", 8, False,
+     "Offene vSAN-Health-Findings beheben, bevor der Betrieb übernommen wird."),
+    ("Ausfallsicherheit", "Storage-Policies bieten Ausfalltoleranz (FTT >= 1) für alle produktiven VMs",
+     "Keine VMs mit FTT=0.", 8, True, "Storage-Policies anpassen und Rebalancing/Resync einplanen."),
+    ("Kapazität", "Freie vSAN-Kapazität beträgt mind. 30 % (Slack Space)",
+     "", 6, False, "Kapazität erweitern oder Daten bereinigen."),
+]
+
+# (Kategorie, Name, Beschreibung, Gewicht, K.O., Empfehlung)  – Basiskatalog Microsoft Hyper-V
 HYPERV = [
     ("Lizenz & Support", "Windows-Server-Lizenzen (Datacenter) decken alle Hosts ab, Software Assurance/Support vorhanden",
      "Für S2D und Azure Local gelten eigene Lizenzmodelle.", 8, True,
@@ -91,22 +96,6 @@ HYPERV = [
      "", 8, False, "Cluster-Kapazität erweitern oder Workloads konsolidieren."),
     ("Cluster", "Live-Migration und Netzwerke (Management, Migration, VM) sind redundant ausgelegt (SET/Teaming)",
      "", 7, False, "Netzwerkkonzept mit redundanten Uplinks umsetzen."),
-    ("Storage Spaces Direct (S2D)", "S2D-Volumes verwenden Mirror-Resiliency (Zweiwege oder Dreiwege-Spiegel)",
-     "Nur bewerten, wenn S2D eingesetzt wird; sonst 'Nicht anwendbar'.", 8, True,
-     "Volumes mit passender Resiliency neu anlegen bzw. Cluster-Design überarbeiten."),
-    ("Storage Spaces Direct (S2D)", "Virtual Disks und Storage Pool sind 'Healthy', keine offenen Repair-Jobs",
-     "", 7, False, "Defekte Laufwerke ersetzen und Repair-Jobs abwarten."),
-    ("Storage Spaces Direct (S2D)", "Reservekapazität entspricht mind. einem Laufwerk pro Knoten (bis max. 4)",
-     "", 6, False, "Kapazität erweitern oder Volumes verkleinern, um Reserve herzustellen."),
-    ("Storage Spaces Direct (S2D)", "RDMA (RoCE/iWARP) und DCB/PFC sind korrekt konfiguriert",
-     "", 6, False, "RDMA- und DCB-Konfiguration nach Herstellervorgabe korrigieren."),
-    ("Azure Local", "Azure-Arc-Registrierung ist aktiv und die Abrechnung/Subscription ist gültig",
-     "Nur bewerten, wenn Azure Local eingesetzt wird.", 9, True,
-     "Registrierung und Subscription reparieren; Verbindung zu Azure herstellen."),
-    ("Azure Local", "Azure Local läuft auf einem unterstützten Release (nicht älter als 6 Monate)",
-     "", 8, False, "Update auf aktuelle Solution-Version durchführen."),
-    ("Azure Local", "Lifecycle-Management (Updates inkl. Solution Builder Extension) funktioniert fehlerfrei",
-     "", 5, False, "Update-Pipeline prüfen und Lifecycle-Management-Fehler beheben."),
     ("Backup & Recovery", "Host- oder VM-basierte Datensicherung (VSS-fähig) mit nachgewiesen erfolgreichem Restore-Test",
      "Letzter Restore-Test nicht älter als 12 Monate.", 9, True,
      "Backup-Lösung einführen bzw. reparieren und einen Restore-Test durchführen."),
@@ -127,13 +116,34 @@ HYPERV = [
      "", 5, False, "Fehlende Dokumentation im Vorprojekt erstellen (Ist-Aufnahme)."),
 ]
 
+# Erweiterung Storage Spaces Direct
+S2D = [
+    ("Resiliency & Health", "S2D-Volumes verwenden Mirror-Resiliency (Zweiwege oder Dreiwege-Spiegel)",
+     "", 8, True,
+     "Volumes mit passender Resiliency neu anlegen bzw. Cluster-Design überarbeiten."),
+    ("Resiliency & Health", "Virtual Disks und Storage Pool sind 'Healthy', keine offenen Repair-Jobs",
+     "", 7, False, "Defekte Laufwerke ersetzen und Repair-Jobs abwarten."),
+    ("Kapazität", "Reservekapazität entspricht mind. einem Laufwerk pro Knoten (bis max. 4)",
+     "", 6, False, "Kapazität erweitern oder Volumes verkleinern, um Reserve herzustellen."),
+    ("Netzwerk", "RDMA (RoCE/iWARP) und DCB/PFC sind korrekt konfiguriert",
+     "", 6, False, "RDMA- und DCB-Konfiguration nach Herstellervorgabe korrigieren."),
+]
+
+# Erweiterung Azure Local
+AZURE_LOCAL = [
+    ("Registrierung & Support", "Azure-Arc-Registrierung ist aktiv und die Abrechnung/Subscription ist gültig",
+     "", 9, True,
+     "Registrierung und Subscription reparieren; Verbindung zu Azure herstellen."),
+    ("Updates", "Azure Local läuft auf einem unterstützten Release (nicht älter als 6 Monate)",
+     "", 8, False, "Update auf aktuelle Solution-Version durchführen."),
+    ("Updates", "Lifecycle-Management (Updates inkl. Solution Builder Extension) funktioniert fehlerfrei",
+     "", 5, False, "Update-Pipeline prüfen und Lifecycle-Management-Fehler beheben."),
+]
+
 # (Abschnitt, Bezeichnung, Hilfe, Feldtyp, Pflicht)
 ONBOARDING = [
     ("general", "Offizieller Firmenname und Rechnungsadresse", "", "textarea", True),
     ("general", "Vertragsnummer / Vertragsbeginn", "", "text", True),
-    ("general", "Technischer Hauptansprechpartner (Name, Telefon, E-Mail)", "", "textarea", True),
-    ("general", "Vertreter der Geschäftsführung / Auftraggeber", "", "text", True),
-    ("general", "Eskalationskontakt außerhalb der Servicezeiten", "", "text", True),
     ("general", "Standorte und Rechenzentren", "Adresse, Zugangsregelung, Ansprechpartner vor Ort", "textarea", True),
     ("general", "Servicezeiten und Wartungsfenster", "", "text", True),
     ("general", "Freigabeprozess für Changes", "Wer darf Changes freigeben?", "textarea", True),
@@ -160,6 +170,23 @@ ONBOARDING = [
 ]
 
 
+# Zusätzliche Onboarding-Punkte je Erweiterung (nur Demo-Daten): Erweiterung -> [(Abschnitt, Bezeichnung, Hilfe, Feldtyp, Pflicht)]
+EXT_ONBOARDING = {
+    "VMware vSAN": [
+        ("readiness", "vSAN-Netzwerk (VLAN, MTU, Uplinks) ist dokumentiert", "", "text", True),
+        ("readiness", "vSAN-Storage-Policies sind dokumentiert", "", "text", True),
+    ],
+    "Storage Spaces Direct (S2D)": [
+        ("readiness", "RDMA-/DCB-Konfiguration ist dokumentiert", "", "text", True),
+        ("readiness", "Volume-Layout und Resiliency sind dokumentiert", "", "text", False),
+    ],
+    "Azure Local": [
+        ("readiness", "Azure-Subscription und Ressourcengruppe (Arc) sind bekannt", "", "text", True),
+        ("readiness", "Zugriff auf das Azure-Portal für den Betrieb ist geklärt", "", "text", True),
+    ],
+}
+
+
 def default_template_items() -> list[OnboardingTemplateItem]:
     return [OnboardingTemplateItem(section=sec, label=label, help=help_, field_type=ftype, required=req,
                                    position=(n + 1) * 10)
@@ -173,10 +200,21 @@ def seed_admin(db: Session) -> None:
         db.commit()
 
 
-def _add_catalog(db: Session, product: Product, rows) -> None:
+def _add_catalog(db: Session, product: Product, rows, extension=None) -> None:
     for n, (cat, name, desc, weight, blocker, rec) in enumerate(rows):
-        db.add(Parameter(product_id=product.id, category=cat, name=name, description=desc, weight=weight,
-                         is_blocker=blocker, recommendation=rec, position=(n + 1) * 10))
+        db.add(Parameter(product_id=product.id, extension_id=extension.id if extension else None, category=cat,
+                         name=name, description=desc, weight=weight, is_blocker=blocker, recommendation=rec,
+                         position=(n + 1) * 10))
+
+
+def _add_extension(db: Session, product: Product, name: str, description: str, position: int, rows) -> None:
+    ext = ProductExtension(product_id=product.id, name=name, description=description, position=position)
+    db.add(ext)
+    db.flush()
+    _add_catalog(db, product, rows, ext)
+    for n, (section, label, help_, ftype, required) in enumerate(EXT_ONBOARDING.get(name, [])):
+        db.add(OnboardingTemplateItem(product_id=product.id, extension_id=ext.id, section=section, label=label,
+                                      help=help_, field_type=ftype, required=required, position=(n + 1) * 10))
 
 
 def seed_demo(db: Session) -> None:
@@ -186,13 +224,15 @@ def seed_demo(db: Session) -> None:
                   description="Betrieb virtualisierter Infrastruktur auf VMware vSphere oder Microsoft Hyper-V.")
     db.add(offer)
     db.flush()
-    vs = Product(offer_id=offer.id, name="VMware vSphere (inkl. vSAN)",
-                 description="ESXi/vCenter mit optionalem vSAN")
-    hv = Product(offer_id=offer.id, name="Microsoft Hyper-V (inkl. S2D und Azure Local)",
-                 description="Hyper-V-Cluster mit optionalem Storage Spaces Direct oder Azure Local")
+    vs = Product(offer_id=offer.id, name="VMware vSphere", description="ESXi und vCenter")
+    hv = Product(offer_id=offer.id, name="Microsoft Hyper-V", description="Hyper-V-Cluster")
+    for product in (vs, hv):
+        product.template_items = default_template_items()
     db.add_all([vs, hv])
     db.flush()
     _add_catalog(db, vs, VSPHERE)
+    _add_extension(db, vs, "VMware vSAN", "Hyperkonvergenter Storage mit vSAN", 10, VSAN)
     _add_catalog(db, hv, HYPERV)
-    offer.template_items = default_template_items()
+    _add_extension(db, hv, "Storage Spaces Direct (S2D)", "Hyperkonvergenter Storage mit S2D", 10, S2D)
+    _add_extension(db, hv, "Azure Local", "Azure Local (ehemals Azure Stack HCI)", 20, AZURE_LOCAL)
     db.commit()

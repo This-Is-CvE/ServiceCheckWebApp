@@ -12,10 +12,15 @@ from .pdf_report import BRAND, INK, LINE, MUTED, _p, _styles, header, make_foote
 
 SECTIONS = {
     "general": "1. Allgemeine Informationen",
-    "assets": "2. Installierte technische Basis",
-    "checklist": "3. Onboarding-Checkliste",
-    "readiness": "4. Voraussetzungen für die Serviceerbringung",
+    "contacts": "2. Ansprechpartner",
+    "assets": "3. Installierte technische Basis",
+    "checklist": "4. Onboarding-Checkliste",
+    "readiness": "5. Voraussetzungen für die Serviceerbringung",
 }
+
+
+def _label(item) -> str:
+    return item.label + (f" [{item.extension_name}]" if item.extension_name else "")
 GREEN = colors.HexColor("#2e9e4f")
 RED = colors.HexColor("#c8372d")
 
@@ -46,10 +51,14 @@ def build_onboarding_report(ob) -> bytes:
     width = A4[0] - 36 * mm
     story = [header("Onboarding-Dokumentation", st, width), Spacer(1, 5 * mm)]
 
-    open_required = [i.label for i in ob.items
+    open_required = [_label(i) for i in ob.items
                      if i.required and not (i.value.strip() if i.section == "general" else i.done)]
+    if not ob.contacts:
+        open_required.insert(0, "Mindestens ein Ansprechpartner")
     meta = [
-        ["Kunde", ob.customer.name], ["Managed Service Offer", ob.offer_name], ["Bezeichnung", ob.title],
+        ["Kunde", ob.customer.name + (f"  (KT-Nummer {ob.customer.kt_number})" if ob.customer.kt_number else "")],
+        ["Managed Service", ob.offer_name], ["Produkt", ob.product_name or "\u2013"],
+        ["Erweiterungen", ", ".join(e["name"] for e in ob.extensions) or "\u2013"], ["Bezeichnung", ob.title],
         ["Stand", datetime.now().strftime("%d.%m.%Y")],
         ["Status", "Abgeschlossen" if ob.status == "completed" else "In Bearbeitung"],
     ]
@@ -68,14 +77,28 @@ def build_onboarding_report(ob) -> bytes:
         rows.append([_p(i.label, st["cell"]), _p(i.value or "–", st["cell"])])
     story.append(_table(rows, [width * 0.38, width * 0.62]))
 
-    # 2. Technische Basis
+    # 2. Ansprechpartner
+    story.append(_p(SECTIONS["contacts"], st["h2"]))
+    if ob.contacts:
+        rows = [[_p(h, st["small"]) for h in ("Name / Funktion", "Telefon / Mobil", "E-Mail", "Bemerkung")]]
+        for c in ob.contacts:
+            rows.append([[_p(c.name, st["cell"]), _p(c.role, st["small"])],
+                         [_p(c.phone, st["cell"]), _p(c.mobile, st["cell"])],
+                         _p(c.email, st["cell"]), _p(c.notes, st["cell"])])
+        story.append(_table(rows, [width * f for f in (0.28, 0.24, 0.26, 0.22)]))
+    else:
+        story.append(_p("Es wurden noch keine Ansprechpartner erfasst.", st["body"]))
+
+    # 3. Technische Basis
     story.append(_p(SECTIONS["assets"], st["h2"]))
     if ob.assets:
-        rows = [[_p(h, st["small"]) for h in ("Kategorie", "Bezeichnung", "Produkt / Version", "Anz.", "Standort", "Notiz")]]
+        rows = [[_p(h, st["small"]) for h in ("Kategorie", "Bezeichnung / Modell", "Seriennummer", "Produkt / Version",
+                                              "Anz.", "Standort", "Notiz")]]
         for a in ob.assets:
-            rows.append([_p(a.category, st["cell"]), _p(a.name, st["cell"]), _p(a.product_version, st["cell"]),
+            rows.append([_p(a.category, st["cell"]), [_p(a.name, st["cell"]), _p(a.model, st["small"])],
+                         _p(a.serial_number, st["cell"]), _p(a.product_version, st["cell"]),
                          _p(a.quantity, st["cell"]), _p(a.location, st["cell"]), _p(a.notes, st["cell"])])
-        story.append(_table(rows, [width * f for f in (0.15, 0.24, 0.2, 0.07, 0.14, 0.2)]))
+        story.append(_table(rows, [width * f for f in (0.14, 0.2, 0.15, 0.14, 0.06, 0.12, 0.19)]))
     else:
         story.append(_p("Es wurden noch keine Systeme erfasst.", st["body"]))
 
@@ -84,7 +107,7 @@ def build_onboarding_report(ob) -> bytes:
         story.append(_p(SECTIONS[key], st["h2"]))
         rows = [[_p("Punkt", st["small"]), _p("Status", st["small"]), _p("Notiz", st["small"])]]
         for i in (x for x in ob.items if x.section == key):
-            rows.append([_p(i.label + (" *" if i.required else ""), st["cell"]), _status(i.done, i.required, st),
+            rows.append([_p(_label(i) + (" *" if i.required else ""), st["cell"]), _status(i.done, i.required, st),
                          _p(i.comment, st["cell"])])
         story.append(_table(rows, [width * 0.55, width * 0.17, width * 0.28]))
     story.append(_p("* Pflichtpunkt", st["small"]))

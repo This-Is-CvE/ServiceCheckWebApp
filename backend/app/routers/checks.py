@@ -7,9 +7,9 @@ from sqlalchemy.orm import Session
 
 from .. import scoring
 from ..database import get_db
-from ..models import CheckItem, Customer, Product, ServiceCheck, User
+from ..models import CheckItem, Customer, Product, ProductExtension, ServiceCheck, User
 from ..pdf_report import build_report
-from ..schemas import CheckCreate, CheckItemUpdate, CheckListOut, CheckOut, CheckUpdate
+from ..schemas import CheckCreate, CheckItemUpdate, CheckListOut, CheckOut, CheckUpdate, ExtensionSelection
 from ..security import current_user
 
 router = APIRouter(prefix="/api/checks", tags=["checks"])
@@ -24,7 +24,8 @@ def _get(db: Session, check_id: int) -> ServiceCheck:
 
 def _list_out(c: ServiceCheck) -> dict:
     return {
-        "id": c.id, "title": c.title, "customer_id": c.customer_id, "customer_name": c.customer.name,
+        "id": c.id, "title": c.title, "product_id": c.product_id, "customer_id": c.customer_id, "customer_name": c.customer.name,
+        "customer_kt_number": c.customer.kt_number,
         "offer_name": c.offer_name, "product_name": c.product_name, "status": c.status,
         "score": c.score, "light": c.light, "created_at": c.created_at, "completed_at": c.completed_at,
     }
@@ -33,7 +34,7 @@ def _list_out(c: ServiceCheck) -> dict:
 def _out(c: ServiceCheck) -> CheckOut:
     return CheckOut(
         **_list_out(c),
-        system_description=c.system_description, green_min=c.green_min, yellow_min=c.yellow_min,
+        system_description=c.system_description, extensions=c.extensions, green_min=c.green_min, yellow_min=c.yellow_min,
         created_by=(c.created_by.full_name or c.created_by.username) if c.created_by else None,
         items=c.items, result=scoring.evaluate(c.items, c.green_min, c.yellow_min),
     )
@@ -52,26 +53,69 @@ def list_checks(customer_id: int | None = None, db: Session = Depends(get_db), _
     return [_list_out(c) for c in db.scalars(q)]
 
 
+def _selected_extensions(db: Session, product: Product, ids: list[int]) -> list[ProductExtension]:
+    exts = [e for e in product.extensions if e.id in set(ids)]
+    if len(exts) != len(set(ids)):
+        raise HTTPException(422, "Mindestens eine Erweiterung gehört nicht zu diesem Produkt")
+    return exts
+
+
+def _snapshot(params, extension: ProductExtension | None = None) -> list[CheckItem]:
+    base = (extension.position if extension else 0) * 1000
+    return [CheckItem(category=p.category, name=p.name, description=p.description, weight=p.weight,
+                      is_blocker=p.is_blocker, recommendation=p.recommendation, position=base + n,
+                      extension_name=extension.name if extension else None)
+            for n, p in enumerate(params)]
+
+
 @router.post("", response_model=CheckOut, status_code=201)
 def create_check(body: CheckCreate, db: Session = Depends(get_db), user: User = Depends(current_user)):
     customer = db.get(Customer, body.customer_id)
     product = db.get(Product, body.product_id)
     if not customer or not product:
         raise HTTPException(404, "Kunde oder Produkt nicht gefunden")
-    if not product.parameters:
-        raise HTTPException(422, "Für dieses Produkt ist noch kein Parameterkatalog hinterlegt")
+    exts = _selected_extensions(db, product, body.extension_ids)
+    items = _snapshot(product.base_parameters)
+    for e in exts:
+        items += _snapshot([p for p in product.parameters if p.extension_id == e.id], e)
+    if not items:
+        raise HTTPException(422, "Für diese Auswahl ist noch kein Parameterkatalog hinterlegt")
     check = ServiceCheck(
         customer_id=customer.id, product_id=product.id, offer_name=product.offer.name,
         product_name=product.name, title=body.title or f"{product.name} – {customer.name}",
         system_description=body.system_description, green_min=product.green_min,
         yellow_min=product.yellow_min, created_by_id=user.id,
+        extensions=[{"id": e.id, "name": e.name} for e in exts],
     )
-    check.items = [
-        CheckItem(category=p.category, name=p.name, description=p.description, weight=p.weight,
-                  is_blocker=p.is_blocker, recommendation=p.recommendation, position=n)
-        for n, p in enumerate(product.parameters)
-    ]
+    check.items = items
     db.add(check)
+    _refresh(check)
+    db.commit()
+    return _out(check)
+
+
+@router.put("/{check_id}/extensions", response_model=CheckOut)
+def set_extensions(check_id: int, body: ExtensionSelection, db: Session = Depends(get_db),
+                   _: User = Depends(current_user)):
+    """Erweiterungen eines Entwurfs ändern. Antworten bereits gewählter Erweiterungen bleiben erhalten;
+    abgewählte Erweiterungen werden samt ihren Antworten entfernt."""
+    check = _get(db, check_id)
+    if check.status == "completed":
+        raise HTTPException(409, "Abgeschlossene Checks sind schreibgeschützt")
+    product = db.get(Product, check.product_id) if check.product_id else None
+    if not product:
+        raise HTTPException(409, "Das Produkt dieses Checks existiert nicht mehr im Katalog")
+    wanted = _selected_extensions(db, product, body.extension_ids)
+    current = {e["id"]: e["name"] for e in check.extensions}
+    for gone in set(current) - {e.id for e in wanted}:
+        check.items = [i for i in check.items if i.extension_name != current[gone]]
+    new_items = []
+    for e in wanted:
+        if e.id not in current:
+            new_items += _snapshot([p for p in product.parameters if p.extension_id == e.id], e)
+    check.items = check.items + new_items
+    check.extensions = [{"id": e.id, "name": e.name} for e in wanted]
+    _refresh(check)
     db.commit()
     return _out(check)
 

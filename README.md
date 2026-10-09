@@ -2,11 +2,11 @@
 
 Web-App für MSP-Vertragsanbahnung und Kunden-Onboarding.
 
-* **Modul 1 – Service Check:** Pro Managed Service Offer gibt es ein oder mehrere Produkte, jedes mit einem
-  anpassbaren Katalog technischer Parameter (Gewichtung 1–10, optional K.-o.-Kriterium, Empfehlung bei Abweichung).
+* **Modul 1 – Service Check:** Pro Managed Service gibt es ein oder mehrere Produkte, jedes mit einem
+  anpassbaren Katalog technischer Parameter (Gewichtung 1–10, optional K.O.-Kriterium, Empfehlung bei Abweichung).
   Der Check ergibt eine Ampel (Grün/Gelb/Rot), einen Score und einen PDF-Report mit Empfehlungen für das Vorprojekt.
-* **Modul 2 – Onboarding:** Je Offer eine Vorlage mit allgemeinen Informationen, installierter technischer Basis
-  (Systemliste) sowie Checklisten (Onboarding-Aufgaben und Voraussetzungen für die Serviceerbringung).
+* **Modul 2 – Onboarding:** Je Produkt (und optional je Erweiterung) eine Vorlage mit allgemeinen Informationen,
+  mehreren Ansprechpartnern, installierter technischer Basis (inkl. Modell und Seriennummer) sowie Checklisten (Onboarding-Aufgaben und Voraussetzungen für die Serviceerbringung).
   Das Onboarding lässt sich erst abschließen, wenn alle Pflichtpunkte erledigt sind.
 
 Stack: FastAPI · SQLAlchemy · PostgreSQL (lokal SQLite) · React/Vite · ReportLab (PDF).
@@ -18,8 +18,8 @@ Stack: FastAPI · SQLAlchemy · PostgreSQL (lokal SQLite) · React/Vite · Repor
 
 | Ampel | Bedingung |
 |-------|-----------|
-| Rot   | ein K.-o.-Parameter ist „Nicht erfüllt" **oder** Score < Gelb-Schwelle |
-| Gelb  | Score < Grün-Schwelle **oder** ein K.-o.-Parameter ist nur „Teilweise" |
+| Rot   | ein K.O.-Parameter ist „Nicht erfüllt" **oder** Score < Gelb-Schwelle |
+| Gelb  | Score < Grün-Schwelle **oder** ein K.O.-Parameter ist nur „Teilweise" |
 | Grün  | sonst |
 
 Schwellwerte (Standard 80 % / 50 %) sind pro Produkt einstellbar. Beim Start eines Checks wird der Katalog als
@@ -68,9 +68,11 @@ cd backend && pytest
 
 ## Kataloge selbst anlegen
 
-Die App startet standardmäßig **ohne** Katalog. Als Administrator unter „Kataloge & Vorlagen": Offer anlegen → Produkt
-anlegen → Parameter hinzufügen (Kategorie, Prüffrage, Gewichtung, K.-o., Empfehlung; „Speichern & nächster" für
-schnelles Erfassen). Jedes neue Offer erhält eine Standard-Onboarding-Vorlage, die ebenfalls editierbar ist.
+Die App startet standardmäßig **ohne** Katalog. Als Administrator unter „Kataloge & Vorlagen": Managed Service anlegen → Produkt
+anlegen → Parameter im Basiskatalog hinzufügen (Kategorie, Prüffrage, Gewichtung, K.O., Empfehlung; „Speichern & nächster"
+für schnelles Erfassen) → bei Bedarf „+ Erweiterung“ mit eigenem Katalog. Jedes neue Produkt erhält eine
+Standard-Onboarding-Vorlage (Reiter „Onboarding-Punkte“), die ebenfalls editierbar ist; auch Erweiterungen können
+zusätzliche Onboarding-Punkte mitbringen.
 
 ## Onboarding-Dokument
 
@@ -91,8 +93,8 @@ Tests gegen PostgreSQL: `TEST_DATABASE_URL=postgresql+psycopg://user@host/db pyt
 
 ## Beispieldaten (optional, `SEED_DEMO_DATA=1`)
 
-Offer *Managed Virtual Infrastructure* mit *VMware vSphere (inkl. vSAN)* und *Microsoft Hyper-V (inkl. S2D und
-Azure Local)* – je rund 20–25 Parameter – sowie eine Onboarding-Vorlage. Gewichtungen, K.-o.-Kriterien und Texte sind
+Managed Service *Managed Virtual Infrastructure* mit den Produkten *VMware vSphere* (Erweiterung *vSAN*) und
+*Microsoft Hyper-V* (Erweiterungen *S2D* und *Azure Local*) mit je rund 17–20 Basisparametern sowie Onboarding-Vorlagen. Gewichtungen, K.O.-Kriterien und Texte sind
 Vorschläge und sollten fachlich geprüft werden; alles ist in der App unter „Kataloge & Vorlagen" änderbar.
 
 ## Bekannte Grenzen

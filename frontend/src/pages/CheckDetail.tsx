@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, downloadPdf } from "../api";
-import { Answer, ANSWER_LABEL, Check, CheckItem, Finding, LIGHT_LABEL } from "../types";
-import { ErrorBox, fmtDate, fmtScore, StatusPill, TrafficLight, useAsync } from "../ui";
+import { Answer, ANSWER_LABEL, Check, CheckItem, Finding, LIGHT_LABEL, Product } from "../types";
+import { ErrorBox, ExtensionPicker, fmtDate, fmtScore, StatusPill, TrafficLight, useAsync } from "../ui";
 
 const ANSWERS: Answer[] = ["yes", "partial", "no", "na"];
 const PRIORITY_LABEL: Record<Finding["priority"], string> = {
@@ -25,7 +25,7 @@ function ItemRow({ item, locked, onChange }: { item: CheckItem; locked: boolean;
       <div className="item-head">
         <div>
           <b>{item.name}</b>
-          {item.is_blocker && <span className="badge ko" title="Bei „Nicht erfüllt“ wird die Ampel Rot">K.-o.</span>}
+          {item.is_blocker && <span className="badge ko" title="Bei „Nicht erfüllt“ wird die Ampel Rot">K.O.</span>}
           <span className="badge" title="Gewichtung">Gewicht {item.weight}</span>
           {item.description && <small className="block muted">{item.description}</small>}
         </div>
@@ -50,6 +50,7 @@ export default function CheckDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const { data: check, error, setData } = useAsync(() => api<Check>(`/checks/${id}`), [id]);
+  const product = useAsync(() => (check?.product_id ? api<Product>(`/products/${check.product_id}`) : Promise.resolve(null)), [check?.product_id]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -71,13 +72,20 @@ export default function CheckDetail() {
   const remove = () => confirm("Diesen Service Check endgültig löschen?") &&
     run(async () => { await api(`/checks/${check.id}`, "DELETE"); nav("/checks"); });
 
-  const categories = [...new Set(check.items.map((i) => i.category))];
+  const categories = [...new Set(check.items.map((i) => i.section))];
+  const selectedExt = check.extensions.map((e) => e.id);
+  const changeExtensions = (ids: number[]) => {
+    const removed = check.extensions.filter((e) => !ids.includes(e.id));
+    const lost = check.items.filter((i) => removed.some((e) => e.name === i.extension_name) && i.answer !== null).length;
+    if (lost && !confirm(`Beim Abwählen gehen ${lost} bereits gegebene Antworten dieser Erweiterung verloren. Fortfahren?`)) return;
+    run(async () => setData(await api<Check>(`/checks/${check.id}/extensions`, "PUT", { extension_ids: ids })));
+  };
 
   return (
     <>
       <div className="crumbs"><Link to="/checks">Service Checks</Link> › {check.customer_name}</div>
       <div className="row between wrap">
-        <div><h1>{check.title}</h1><div className="muted">{check.offer_name} · {check.product_name} · {check.customer_name} · {fmtDate(check.created_at)} <StatusPill status={check.status} /></div></div>
+        <div><h1>{check.title}</h1><div className="muted">{check.offer_name} · {check.product_name}{check.extensions.length > 0 && ` + ${check.extensions.map((e) => e.name).join(", ")}`} · {check.customer_name}{check.customer_kt_number && ` (${check.customer_kt_number})`} · {fmtDate(check.created_at)} <StatusPill status={check.status} /></div></div>
         <div className="row">
           <button className="btn" onClick={pdf} disabled={busy}>PDF-Report</button>
           {locked
@@ -93,8 +101,8 @@ export default function CheckDetail() {
         <div className="grow">
           <h2>{LIGHT_LABEL[r.light]} · {fmtScore(r.score)}</h2>
           <p>{VERDICT[r.light]}</p>
-          {r.blocker_failed.length > 0 && <p className="alert error"><b>K.-o.-Kriterien nicht erfüllt:</b> {r.blocker_failed.join("; ")}</p>}
-          {r.blocker_partial.length > 0 && <p className="alert warn"><b>K.-o.-Kriterien nur teilweise erfüllt:</b> {r.blocker_partial.join("; ")}</p>}
+          {r.blocker_failed.length > 0 && <p className="alert error"><b>K.O.-Kriterien nicht erfüllt:</b> {r.blocker_failed.join("; ")}</p>}
+          {r.blocker_partial.length > 0 && <p className="alert warn"><b>K.O.-Kriterien nur teilweise erfüllt:</b> {r.blocker_partial.join("; ")}</p>}
           <div className="bar" title={`${r.answered} von ${r.total} bewertet`}><i style={{ width: `${(r.answered / r.total) * 100}%` }} /></div>
           <small className="muted">{r.answered} von {r.total} Prüfpunkten bewertet · Grün ab {check.green_min} %, Gelb ab {check.yellow_min} %</small>
         </div>
@@ -108,11 +116,17 @@ export default function CheckDetail() {
       </section>
 
       {check.system_description && <section className="card"><b>System:</b> {check.system_description}</section>}
+      {(product.data?.extensions.length ?? 0) > 0 && (
+        <section className="card">
+          <ExtensionPicker extensions={product.data!.extensions} selected={selectedExt} onChange={changeExtensions} disabled={locked || busy} />
+          <small className="muted">Nur ausgewählte Erweiterungen werden geprüft und in die Bewertung einbezogen.</small>
+        </section>
+      )}
 
       {categories.map((cat) => (
         <section key={cat} className="card">
           <h2>{cat}</h2>
-          {check.items.filter((i) => i.category === cat).map((i) => (
+          {check.items.filter((i) => i.section === cat).map((i) => (
             <ItemRow key={`${i.id}-${i.comment}`} item={i} locked={locked || busy} onChange={(p) => setAnswer(i, p)} />
           ))}
         </section>

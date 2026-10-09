@@ -5,8 +5,8 @@ na (nicht anwendbar, wird aus der Wertung genommen).
 
 Score = Summe(Gewicht * Faktor) / Summe(Gewicht) * 100 über alle anwendbaren Parameter.
 Ampel:
-  rot    - ein K.-o.-Parameter ist "nicht erfüllt" ODER Score < Gelb-Schwelle
-  gelb   - Score < Grün-Schwelle ODER ein K.-o.-Parameter ist nur "teilweise" erfüllt
+  rot    - ein K.O.-Parameter ist "nicht erfüllt" ODER Score < Gelb-Schwelle
+  gelb   - Score < Grün-Schwelle ODER ein K.O.-Parameter ist nur "teilweise" erfüllt
   grün   - sonst
   grau   - noch nichts bewertet
 """
@@ -52,7 +52,7 @@ def evaluate(items, green_min: float, yellow_min: float) -> dict:
 
     categories: "OrderedDict[str, list]" = OrderedDict()
     for i in items:
-        categories.setdefault(i.category, []).append(i)
+        categories.setdefault(getattr(i, "section", i.category), []).append(i)
     category_scores = [
         {
             "name": name,
@@ -69,7 +69,7 @@ def evaluate(items, green_min: float, yellow_min: float) -> dict:
             gap = i.weight * (1 - FACTORS[i.answer])
             findings.append({
                 "item_id": i.id,
-                "category": i.category,
+                "category": getattr(i, "section", i.category),
                 "name": i.name,
                 "answer": i.answer,
                 "weight": i.weight,

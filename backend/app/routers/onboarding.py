@@ -6,11 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import (Customer, Offer, Onboarding, OnboardingAsset, OnboardingDocument, OnboardingItem,
-                      ServiceCheck, User)
+from ..models import (Customer, Onboarding, OnboardingAsset, OnboardingContact, OnboardingDocument, OnboardingItem,
+                      Product, ProductExtension, ServiceCheck, User)
 from .. import storage
 from ..pdf_onboarding import build_onboarding_report
-from ..schemas import AssetIn, OnboardingCreate, OnboardingItemUpdate, OnboardingListOut, OnboardingOut
+from ..schemas import (AssetIn, ContactIn, ExtensionSelection, OnboardingCreate, OnboardingItemUpdate, OnboardingListOut,
+                       OnboardingOut)
 from ..security import current_user
 
 router = APIRouter(prefix="/api", tags=["onboarding"])
@@ -21,7 +22,10 @@ def _is_done(item: OnboardingItem) -> bool:
 
 
 def _open_required(ob: Onboarding) -> list[str]:
-    return [i.label for i in ob.items if i.required and not _is_done(i)]
+    missing = [i.label for i in ob.items if i.required and not _is_done(i)]
+    if not ob.contacts:
+        missing.insert(0, "Mindestens ein Ansprechpartner")
+    return missing
 
 
 def _progress(ob: Onboarding) -> float:
@@ -29,14 +33,15 @@ def _progress(ob: Onboarding) -> float:
 
 
 def _list_out(ob: Onboarding) -> dict:
-    return {"id": ob.id, "title": ob.title, "customer_id": ob.customer_id, "customer_name": ob.customer.name,
-            "offer_name": ob.offer_name, "status": ob.status, "progress": _progress(ob),
+    return {"id": ob.id, "title": ob.title, "product_id": ob.product_id, "customer_id": ob.customer_id, "customer_name": ob.customer.name,
+            "customer_kt_number": ob.customer.kt_number, "offer_name": ob.offer_name,
+            "product_name": ob.product_name, "status": ob.status, "progress": _progress(ob),
             "created_at": ob.created_at}
 
 
 def _out(ob: Onboarding) -> OnboardingOut:
     return OnboardingOut(**_list_out(ob), service_check_id=ob.service_check_id, completed_at=ob.completed_at,
-                         items=ob.items, assets=ob.assets, open_required=_open_required(ob),
+                         extensions=ob.extensions, items=ob.items, assets=ob.assets, contacts=ob.contacts, open_required=_open_required(ob),
                          documents=ob.documents)
 
 
@@ -57,20 +62,66 @@ def list_onboardings(db: Session = Depends(get_db), _: User = Depends(current_us
     return [_list_out(o) for o in db.scalars(select(Onboarding).order_by(Onboarding.created_at.desc()))]
 
 
+def _selected_extensions(product: Product, ids: list[int]) -> list[ProductExtension]:
+    exts = [e for e in product.extensions if e.id in set(ids)]
+    if len(exts) != len(set(ids)):
+        raise HTTPException(422, "Mindestens eine Erweiterung gehört nicht zu diesem Produkt")
+    return exts
+
+
+def _snapshot(product: Product, extension: ProductExtension | None) -> list[OnboardingItem]:
+    ext_id = extension.id if extension else None
+    base = (extension.position if extension else 0) * 1000
+    return [OnboardingItem(section=t.section, label=t.label, help=t.help, field_type=t.field_type,
+                           required=t.required, position=base + t.position,
+                           extension_name=extension.name if extension else None)
+            for t in product.template_items if t.extension_id == ext_id]
+
+
 @router.post("/onboardings", response_model=OnboardingOut, status_code=201)
 def create_onboarding(body: OnboardingCreate, db: Session = Depends(get_db), _: User = Depends(current_user)):
-    customer, offer = db.get(Customer, body.customer_id), db.get(Offer, body.offer_id)
-    if not customer or not offer:
-        raise HTTPException(404, "Kunde oder Offer nicht gefunden")
+    customer, product = db.get(Customer, body.customer_id), db.get(Product, body.product_id)
+    if not customer or not product:
+        raise HTTPException(404, "Kunde oder Produkt nicht gefunden")
     if body.service_check_id and not db.get(ServiceCheck, body.service_check_id):
         raise HTTPException(404, "Service Check nicht gefunden")
-    if not offer.template_items:
-        raise HTTPException(422, "Für dieses Offer ist keine Onboarding-Vorlage hinterlegt")
-    ob = Onboarding(customer_id=customer.id, offer_id=offer.id, offer_name=offer.name,
-                    service_check_id=body.service_check_id, title=body.title or f"Onboarding {customer.name} – {offer.name}")
-    ob.items = [OnboardingItem(section=t.section, label=t.label, help=t.help, field_type=t.field_type,
-                               required=t.required, position=t.position) for t in offer.template_items]
+    exts = _selected_extensions(product, body.extension_ids)
+    items = _snapshot(product, None)
+    for e in exts:
+        items += _snapshot(product, e)
+    if not items:
+        raise HTTPException(422, "Für dieses Produkt ist keine Onboarding-Vorlage hinterlegt")
+    ob = Onboarding(customer_id=customer.id, offer_id=product.offer_id, offer_name=product.offer.name,
+                    product_id=product.id, product_name=product.name,
+                    extensions=[{"id": e.id, "name": e.name} for e in exts],
+                    service_check_id=body.service_check_id,
+                    title=body.title or f"Onboarding {customer.name} – {product.name}")
+    ob.items = items
     db.add(ob)
+    db.commit()
+    return _out(ob)
+
+
+@router.put("/onboardings/{ob_id}/extensions", response_model=OnboardingOut)
+def set_extensions(ob_id: int, body: ExtensionSelection, db: Session = Depends(get_db),
+                   _: User = Depends(current_user)):
+    """Erweiterungen ändern: Punkte bleibender Erweiterungen bleiben unverändert, abgewählte werden entfernt,
+    neue aus der Vorlage hinzugefügt."""
+    ob = _get(db, ob_id)
+    _writable(ob)
+    product = db.get(Product, ob.product_id) if ob.product_id else None
+    if not product:
+        raise HTTPException(409, "Das Produkt dieses Onboardings existiert nicht mehr im Katalog")
+    wanted = _selected_extensions(product, body.extension_ids)
+    current = {e["id"]: e["name"] for e in ob.extensions}
+    for gone in set(current) - {e.id for e in wanted}:
+        ob.items = [i for i in ob.items if i.extension_name != current[gone]]
+    new_items = []
+    for e in wanted:
+        if e.id not in current:
+            new_items += _snapshot(product, e)
+    ob.items = ob.items + new_items
+    ob.extensions = [{"id": e.id, "name": e.name} for e in wanted]
     db.commit()
     return _out(ob)
 
@@ -126,6 +177,41 @@ def delete_asset(ob_id: int, asset_id: int, db: Session = Depends(get_db), _: Us
     if not asset:
         raise HTTPException(404, "Eintrag nicht gefunden")
     ob.assets.remove(asset)
+    db.commit()
+    return _out(ob)
+
+
+@router.post("/onboardings/{ob_id}/contacts", response_model=OnboardingOut, status_code=201)
+def add_contact(ob_id: int, body: ContactIn, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    ob = _get(db, ob_id)
+    _writable(ob)
+    ob.contacts.append(OnboardingContact(**body.model_dump()))
+    db.commit()
+    return _out(ob)
+
+
+@router.put("/onboardings/{ob_id}/contacts/{contact_id}", response_model=OnboardingOut)
+def update_contact(ob_id: int, contact_id: int, body: ContactIn, db: Session = Depends(get_db),
+                   _: User = Depends(current_user)):
+    ob = _get(db, ob_id)
+    _writable(ob)
+    contact = next((c for c in ob.contacts if c.id == contact_id), None)
+    if not contact:
+        raise HTTPException(404, "Ansprechpartner nicht gefunden")
+    for k, v in body.model_dump().items():
+        setattr(contact, k, v)
+    db.commit()
+    return _out(ob)
+
+
+@router.delete("/onboardings/{ob_id}/contacts/{contact_id}", response_model=OnboardingOut)
+def delete_contact(ob_id: int, contact_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    ob = _get(db, ob_id)
+    _writable(ob)
+    contact = next((c for c in ob.contacts if c.id == contact_id), None)
+    if not contact:
+        raise HTTPException(404, "Ansprechpartner nicht gefunden")
+    ob.contacts.remove(contact)
     db.commit()
     return _out(ob)
 
