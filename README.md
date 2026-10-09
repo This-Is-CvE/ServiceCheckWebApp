@@ -58,6 +58,12 @@ cd backend && pytest
 | `SECRET_KEY` | JWT-Signatur – **in Produktion setzen** | Dev-Wert |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | initialer Administrator (nur beim ersten Start) | `admin` / `admin` |
 | `REPORT_COMPANY` | Firmenname in den PDF-Fußzeilen | „PCO" |
+| `STORAGE_BACKEND` | Ablage der Dokument-PDFs: `db` oder `azure` (Blob Storage) | `db` |
+| `AZURE_STORAGE_ACCOUNT_URL` / `AZURE_STORAGE_CONTAINER` | Blob-Konto (Anmeldung per Managed Identity) und Container | – / `documents` |
+| `AZURE_STORAGE_CONNECTION_STRING` | nur Entwicklung (z. B. Azurite) | – |
+| `AUTH_LOCAL_ENABLED` | lokale Benutzer/Passwörter erlauben (`0` = nur Entra ID) | `1` |
+| `OIDC_TENANT_ID`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | Anmeldung mit Microsoft Entra ID, siehe `docs/azure-deployment.md` | – |
+| `OIDC_ADMIN_ROLE` / `OIDC_USER_ROLE` | Namen der Entra-App-Rollen | `ServiceCheck.Admin` / `ServiceCheck.Consultant` |
 | `SEED_DEMO_DATA` | `1` legt beim ersten Start einen Beispielkatalog an (vSphere/Hyper-V); sonst startet die App mit leerem Katalog | `0` |
 
 ## Kataloge selbst anlegen
@@ -73,6 +79,16 @@ Unterschriftenfeldern) herunterladen und für den Kunden verwenden. „PDF ableg
 unveränderliches Dokument in der Datenbank beim Onboarding; beim Abschluss wird automatisch eines abgelegt.
 Das Logo liegt unter `backend/app/assets/logo.png` (PDF) und `frontend/public/logo.png` (Oberfläche).
 
+## Betrieb, Sicherung, Azure
+
+* Das Datenbankschema wird per **Alembic-Migration** beim Start angelegt bzw. aktualisiert. Eine Datenbank, die noch mit
+  der ersten Version (ohne Migrationen) angelegt wurde, muss neu erstellt werden: `docker compose down -v`.
+* Mit PostgreSQL startet die App nur, wenn `SECRET_KEY` und `ADMIN_PASSWORD` gesetzt sind.
+* Sicherung/Wiederherstellung per `scripts/backup.sh` und `scripts/restore.sh` (pg_dump).
+* Betrieb in Azure (App Service, PostgreSQL Flexible Server, Blob Storage, Entra ID): **`docs/azure-deployment.md`**.
+
+Tests gegen PostgreSQL: `TEST_DATABASE_URL=postgresql+psycopg://user@host/db pytest` (Datenbank wird nicht geleert, am besten eine leere Test-Datenbank nehmen).
+
 ## Beispieldaten (optional, `SEED_DEMO_DATA=1`)
 
 Offer *Managed Virtual Infrastructure* mit *VMware vSphere (inkl. vSAN)* und *Microsoft Hyper-V (inkl. S2D und
@@ -81,6 +97,6 @@ Vorschläge und sollten fachlich geprüft werden; alles ist in der App unter „
 
 ## Bekannte Grenzen
 
-* Schema wird per `create_all` angelegt, es gibt noch keine Migrationen (z. B. Alembic).
-* Nur lokale Benutzer (Rollen Administrator/Consultant); kein SSO, kein Kundenportal.
+* Kein Kundenportal; Anmeldung nur für interne Nutzer (lokal oder Entra ID).
+* Kein Änderungsprotokoll und keine Sperre nach Fehlversuchen bei der lokalen Anmeldung.
 * Die PDF-Layouts sind in ReportLab umgesetzt (`backend/app/pdf_report.py`, `pdf_onboarding.py`) und lassen sich dort anpassen.

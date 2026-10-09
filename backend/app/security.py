@@ -17,7 +17,9 @@ def hash_password(pw: str) -> str:
     return bcrypt.hashpw(pw.encode()[:72], bcrypt.gensalt()).decode()
 
 
-def verify_password(pw: str, hashed: str) -> bool:
+def verify_password(pw: str, hashed: str | None) -> bool:
+    if not hashed:
+        return False
     try:
         return bcrypt.checkpw(pw.encode()[:72], hashed.encode())
     except ValueError:

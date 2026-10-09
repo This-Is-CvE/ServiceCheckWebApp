@@ -15,9 +15,14 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(100), unique=True)
     full_name: Mapped[str] = mapped_column(String(200), default="")
-    password_hash: Mapped[str] = mapped_column(String(200))
+    password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)  # None bei SSO-Benutzern
+    external_id: Mapped[str | None] = mapped_column(String(100), unique=True, nullable=True)  # Entra-Objekt-ID
     role: Mapped[str] = mapped_column(String(20), default="consultant")  # admin | consultant
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    @property
+    def sso(self) -> bool:
+        return self.external_id is not None
 
 
 # ---------- Katalog ----------
@@ -184,7 +189,8 @@ class OnboardingDocument(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     onboarding_id: Mapped[int] = mapped_column(ForeignKey("onboardings.id"))
     filename: Mapped[str] = mapped_column(String(300))
-    content: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    content: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True, nullable=True)  # Backend "db"
+    storage_key: Mapped[str | None] = mapped_column(String(300), nullable=True)  # Backend "azure"
     size: Mapped[int] = mapped_column(Integer, default=0)
     created_by: Mapped[str] = mapped_column(String(200), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

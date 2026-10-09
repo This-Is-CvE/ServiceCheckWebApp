@@ -1,7 +1,7 @@
 export type Light = "green" | "yellow" | "red" | "grey";
 export type Answer = "yes" | "partial" | "no" | "na";
 
-export interface User { id: number; username: string; full_name: string; role: "admin" | "consultant"; active: boolean }
+export interface User { id: number; username: string; full_name: string; role: "admin" | "consultant"; active: boolean; sso: boolean }
 export interface Customer { id: number; name: string; contact_name: string; contact_email: string; notes: string }
 export interface Product { id: number; offer_id: number; name: string; description: string; green_min: number; yellow_min: number; parameter_count: number }
 export interface Offer { id: number; name: string; description: string; products: Product[] }

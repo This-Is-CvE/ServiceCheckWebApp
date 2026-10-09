@@ -167,7 +167,7 @@ def default_template_items() -> list[OnboardingTemplateItem]:
 
 
 def seed_admin(db: Session) -> None:
-    if not db.scalar(select(User).limit(1)):
+    if config.AUTH_LOCAL_ENABLED and not db.scalar(select(User).limit(1)):
         db.add(User(username=config.ADMIN_USER, full_name="Administrator", role="admin",
                     password_hash=hash_password(config.ADMIN_PASSWORD)))
         db.commit()

@@ -3,7 +3,7 @@ import sys
 import tempfile
 
 _tmp = tempfile.mkdtemp()
-os.environ["DATABASE_URL"] = f"sqlite:///{_tmp}/test.db"
+os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL", f"sqlite:///{_tmp}/test.db")
 os.environ["SECRET_KEY"] = "test" * 10
 os.environ["SEED_DEMO_DATA"] = "1"
 os.environ["ADMIN_PASSWORD"] = "adminpass"

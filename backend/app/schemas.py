@@ -15,6 +15,7 @@ class UserOut(ORM):
     full_name: str
     role: str
     active: bool
+    sso: bool = False
 
 
 class UserCreate(BaseModel):

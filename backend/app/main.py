@@ -6,14 +6,19 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from .database import Base, SessionLocal, engine
+from .database import SessionLocal, engine
+from .db_migrate import upgrade_db
 from .routers import auth, catalog, checks, customers, onboarding
 from .seed import seed_admin, seed_demo
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(engine)
+    if engine.dialect.name != "sqlite" and (config.SECRET_KEY == "dev-only-change-me"
+                                            or (config.AUTH_LOCAL_ENABLED and config.ADMIN_PASSWORD == "admin")):
+        raise RuntimeError("Produktivbetrieb: SECRET_KEY und ADMIN_PASSWORD müssen gesetzt werden "
+                           "(keine Entwicklungs-Standardwerte).")
+    upgrade_db()
     with SessionLocal() as db:
         seed_admin(db)
         if config.SEED_DEMO_DATA:

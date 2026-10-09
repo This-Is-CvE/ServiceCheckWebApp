@@ -3,6 +3,7 @@ import { Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-rou
 import { api, getToken, setToken } from "./api";
 import { User } from "./types";
 import Login from "./pages/Login";
+import AuthCallback from "./pages/AuthCallback";
 import Dashboard from "./pages/Dashboard";
 import Customers from "./pages/Customers";
 import Checks from "./pages/Checks";
@@ -55,6 +56,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
       <Route element={<Shell />}>
         <Route index element={<Dashboard />} />
         <Route path="customers" element={<Customers />} />

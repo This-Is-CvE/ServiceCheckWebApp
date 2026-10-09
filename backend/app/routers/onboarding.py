@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import (Customer, Offer, Onboarding, OnboardingAsset, OnboardingDocument, OnboardingItem,
                       ServiceCheck, User)
+from .. import storage
 from ..pdf_onboarding import build_onboarding_report
 from ..schemas import AssetIn, OnboardingCreate, OnboardingItemUpdate, OnboardingListOut, OnboardingOut
 from ..security import current_user
@@ -151,15 +152,19 @@ def reopen(ob_id: int, db: Session = Depends(get_db), _: User = Depends(current_
 
 @router.delete("/onboardings/{ob_id}", status_code=204)
 def delete_onboarding(ob_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
-    db.delete(_get(db, ob_id))
+    ob = _get(db, ob_id)
+    docs = list(ob.documents)
+    db.delete(ob)
     db.commit()
+    for doc in docs:
+        storage.remove(doc)
 
 
 # ----- PDF-Dokument -----
 def _file_document(db: Session, ob: Onboarding, user: User) -> OnboardingDocument:
     pdf = build_onboarding_report(ob)
-    doc = OnboardingDocument(filename=_filename(ob), content=pdf, size=len(pdf),
-                             created_by=user.full_name or user.username)
+    doc = OnboardingDocument(filename=_filename(ob), size=len(pdf), created_by=user.full_name or user.username)
+    storage.store(doc, pdf, ob.id)
     ob.documents.insert(0, doc)
     return doc
 
@@ -195,7 +200,7 @@ def download_document(ob_id: int, doc_id: int, db: Session = Depends(get_db), _:
     doc = db.get(OnboardingDocument, doc_id)
     if not doc or doc.onboarding_id != ob_id:
         raise HTTPException(404, "Dokument nicht gefunden")
-    return _pdf_response(doc.content, doc.filename)
+    return _pdf_response(storage.load(doc), doc.filename)
 
 
 @router.delete("/onboardings/{ob_id}/documents/{doc_id}", response_model=OnboardingOut)
@@ -206,4 +211,5 @@ def delete_document(ob_id: int, doc_id: int, db: Session = Depends(get_db), _: U
         raise HTTPException(404, "Dokument nicht gefunden")
     ob.documents.remove(doc)
     db.commit()
+    storage.remove(doc)
     return _out(ob)

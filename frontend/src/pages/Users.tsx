@@ -32,14 +32,14 @@ export default function Users() {
           <tbody>
             {(list.data ?? []).map((u) => (
               <tr key={u.id}>
-                <td>{u.username}</td><td>{u.full_name}</td>
+                <td>{u.username}{u.sso && <span className="badge" title="Rolle und Name werden in Entra ID verwaltet">SSO</span>}</td><td>{u.full_name}</td>
                 <td>
-                  <select value={u.role} disabled={u.id === me.id} onChange={(e) => patch(u, { role: e.target.value })}>
+                  <select value={u.role} disabled={u.id === me.id || u.sso} onChange={(e) => patch(u, { role: e.target.value })}>
                     <option value="admin">Administrator</option><option value="consultant">Consultant</option>
                   </select>
                 </td>
                 <td><input type="checkbox" checked={u.active} disabled={u.id === me.id} onChange={(e) => patch(u, { active: e.target.checked })} /></td>
-                <td className="actions"><button className="btn ghost" onClick={() => resetPw(u)}>Passwort setzen</button></td>
+                <td className="actions">{!u.sso && <button className="btn ghost" onClick={() => resetPw(u)}>Passwort setzen</button>}</td>
               </tr>
             ))}
           </tbody>
