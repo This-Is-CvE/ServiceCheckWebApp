@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+node_modules
+**/node_modules
+frontend/dist
+**/*.db
+backups
+.env
+azure.env
+docs
+scripts
+backend/tests
