@@ -374,6 +374,7 @@ Du bei Problemen auf das vorherige Tag zurückstellen kannst. **Vor größeren U
 | Symptom | Mögliche Ursache und Abhilfe |
 |---|---|
 | `MissingSubscriptionRegistration` | Dienst-Registrierung fehlt, siehe Schritt 3 |
+| `acr build` bricht mit `sh: tsc: Permission denied` (Exit 126) ab | Das lokale `node_modules` aus Windows wurde ins Image kopiert und hat das Ausführrecht von `tsc` verloren. Mit dem aktuellen Stand nicht mehr möglich (`git pull`, danach `acr build` wiederholen) |
 | `acr build` schlägt fehl mit Hinweis auf Tasks | ACR Tasks im Abonnement gesperrt, Alternative in Schritt 4 |
 | Name „bereits vergeben“ (ACR, Speicherkonto, Server, Web-App) | `SUFFIX` ändern und Schritt 2 wiederholen |
 | Web-App zeigt „Application Error“ oder 503 | `az webapp log tail`. Meist: Image konnte nicht geladen werden (Rolle `AcrPull` noch nicht wirksam, dann neu starten) oder falsche Einstellungen |

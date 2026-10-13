@@ -2,7 +2,10 @@ FROM node:22-alpine AS web
 WORKDIR /web
 COPY frontend/package*.json ./
 RUN npm ci
-COPY frontend/ ./
+# Nur Quelldateien kopieren: ein lokales node_modules (z. B. von Windows) darf nie ins Image gelangen
+COPY frontend/index.html frontend/tsconfig.json frontend/vite.config.ts ./
+COPY frontend/public ./public
+COPY frontend/src ./src
 RUN npm run build
 
 FROM python:3.13-slim
