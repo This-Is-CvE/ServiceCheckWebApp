@@ -138,12 +138,18 @@ Das dauert einige Minuten. Was die Einstellungen bedeuten:
 - `--backup-retention 35`: Azure sichert automatisch täglich und ermöglicht die Wiederherstellung auf einen beliebigen Zeitpunkt der
   letzten 35 Tage. `--geo-redundant-backup Enabled` legt zusätzlich eine Kopie in einer anderen Region ab, lässt sich aber nur
   **beim Anlegen** festlegen. Entscheide das jetzt.
-- `--public-access 0.0.0.0`: Der Server ist nur für **Azure-Dienste** erreichbar (also für Deine Web-App), nicht aus dem Internet.
-  Verschlüsselte Verbindungen (SSL) sind bei Flexible Server standardmäßig Pflicht.
+- `--public-access 0.0.0.0` legt die Firewall-Regel „Azure-Dienste zulassen“ an. Der Server hat einen **öffentlichen Endpunkt**
+  (`<name>.postgres.database.azure.com`) und bekommt **keine IP aus einem virtuellen Netz**. Die Regel erlaubt Verbindungen von
+  **jeder** Azure-Ressource, auch von Ressourcen anderer Azure-Kunden. Geschützt bist Du dann durch Benutzername, Passwort und die
+  erzwungene SSL-Verschlüsselung, nicht durch das Netzwerk. Für den ersten Start ist das ein üblicher Kompromiss. Strenger geht es mit
+  **Schritt 8b** (nur die Adressen Deiner Web-App) oder mit privatem Zugang (siehe unten). SSL ist bei Flexible Server standardmäßig Pflicht.
 - Gibt es für `Standard_B1ms` in Eurer Region keine Kapazität, wählt eine andere Region oder ein anderes SKU. `az postgres
   flexible-server list-skus --location $LOC` zeigt die möglichen Größen.
-- Wollt Ihr den Server **ohne** öffentlichen Zugang betreiben, braucht Ihr ein virtuelles Netzwerk mit privatem Zugang. Das ist
-  die empfohlene Variante für den späteren Dauerbetrieb, aber deutlich aufwendiger und nicht Teil dieser Anleitung.
+- **Privater Zugang:** Wollt Ihr den Server ohne öffentlichen Endpunkt betreiben, legt Ihr ihn mit `--vnet` und `--subnet` in einem
+  virtuellen Netz an. Er bekommt dann eine **private IP** in einem dafür delegierten Subnetz plus eine private DNS-Zone, und die
+  Web-App wird per VNet-Integration angebunden. Alternativ gibt es einen Private Endpoint. Der Netzwerkmodus wird beim Anlegen gewählt.
+  Nach meinem Kenntnisstand lässt sich zwischen öffentlichem Zugang und VNet-Integration später nicht wechseln. Prüft das in der aktuellen
+  Microsoft-Dokumentation, bevor Ihr produktiv geht. Diese Variante ist aufwendiger und nicht Teil dieser Anleitung.
 
 Die Datenbank-URL, die die App später braucht, setzt sich so zusammen:
 
@@ -252,6 +258,31 @@ Danach sollte im Portal unter Speicherkonto → Container `documents` ein Blob u
 
 Optional (empfohlen): Im Portal unter Web-App → Überwachung → **Integritätsprüfung** den Pfad `/api/health` eintragen,
 damit Azure eine hängende Instanz erkennt.
+
+## Schritt 8b – Datenbankzugriff auf die Web-App beschränken (empfohlen)
+
+Statt „alle Azure-Ressourcen“ erlaubst Du nur die ausgehenden Adressen Deiner Web-App. Erst die neuen Regeln anlegen, dann die
+allgemeine Regel löschen:
+
+```bash
+# 1) Für jede mögliche ausgehende Adresse der Web-App eine Regel anlegen
+for ip in $(az webapp show --resource-group $RG --name $APP --query possibleOutboundIpAddresses --output tsv | tr ',' ' '); do
+  az postgres flexible-server firewall-rule create --resource-group $RG --server-name $PG \
+    --name "app-${ip//./-}" --start-ip-address $ip --end-ip-address $ip
+done
+
+# 2) Die allgemeine Azure-Regel (0.0.0.0) suchen und löschen
+RULE=$(az postgres flexible-server firewall-rule list --resource-group $RG --server-name $PG \
+  --query "[?startIpAddress=='0.0.0.0'].name" --output tsv)
+az postgres flexible-server firewall-rule delete --resource-group $RG --server-name $PG --name "$RULE" --yes
+
+# 3) Prüfen, dass die App weiter läuft
+curl https://$APP.azurewebsites.net/api/health
+```
+
+Die ausgehenden Adressen können sich ändern, wenn Du den App-Service-Plan skalierst oder auf eine andere Preisstufe wechselst. Wiederhole dann
+Punkt 1. Die Liste `possibleOutboundIpAddresses` enthält alle Adressen, die die App nutzen kann. Meldet die App danach Datenbank-Fehler,
+legst Du die allgemeine Regel mit `--start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0` wieder an.
 
 ## Schritt 9 – Anmeldung mit Entra ID einrichten
 
@@ -379,7 +410,7 @@ Du bei Problemen auf das vorherige Tag zurückstellen kannst. **Vor größeren U
 | Name „bereits vergeben“ (ACR, Speicherkonto, Server, Web-App) | `SUFFIX` ändern und Schritt 2 wiederholen |
 | Web-App zeigt „Application Error“ oder 503 | `az webapp log tail`. Meist: Image konnte nicht geladen werden (Rolle `AcrPull` noch nicht wirksam, dann neu starten) oder falsche Einstellungen |
 | Log: `Produktivbetrieb: SECRET_KEY und ADMIN_PASSWORD müssen gesetzt werden` | Einstellung fehlt, Schritt 7c wiederholen. Mit PostgreSQL startet die App sonst absichtlich nicht |
-| Log: Verbindungsfehler zur Datenbank / `timeout` | Der Server erlaubt nur Azure-Dienste (`--public-access 0.0.0.0`). `DATABASE_URL` prüfen (Servername, Passwort, `?sslmode=require`). Server gestartet? |
+| Log: Verbindungsfehler zur Datenbank / `timeout` | Die Firewall lässt die App nicht durch (nach Schritt 8b: neue ausgehende Adresse der Web-App fehlt, Schritt 8b Punkt 1 wiederholen). `DATABASE_URL` prüfen (Servername, Passwort, `?sslmode=require`). Server gestartet? |
 | Log: `Die Datenbank enthält Tabellen, wurde aber nicht mit Migrationen angelegt` | Es liegt eine Datenbank aus einer sehr alten Version vor. Neue, leere Datenbank verwenden |
 | Dokument ablegen oder herunterladen schlägt fehl (503 „Dokumentenspeicher“) | Rolle *Storage Blob Data Contributor* der Managed Identity fehlt oder noch nicht wirksam (Schritt 7b), oder `AZURE_STORAGE_ACCOUNT_URL` falsch |
 | Anmeldeseite: „Für dieses Konto ist keine Rolle vergeben“ | Benutzer ist in Entra keiner App-Rolle zugewiesen (Schritt 9.6) |
@@ -400,7 +431,7 @@ Die App-Registrierung in Entra bleibt bestehen und muss dort separat gelöscht w
 
 ## Empfohlene nächste Schritte für den Dauerbetrieb
 
-- Datenbank ohne öffentlichen Zugang (virtuelles Netzwerk, privater Endpunkt) und einen eigenen Datenbankbenutzer mit eingeschränkten Rechten statt
+- Datenbank ohne öffentlichen Endpunkt (virtuelles Netzwerk bzw. privater Endpunkt, siehe Schritt 5) und einen eigenen Datenbankbenutzer mit eingeschränkten Rechten statt
   des Server-Administrators.
 - Geheimnisse (`SECRET_KEY`, `DATABASE_URL`, `OIDC_CLIENT_SECRET`) in einem **Key Vault** ablegen und per Key-Vault-Referenz in die App-Einstellungen einbinden.
 - Eigene Domain mit Zertifikat. Danach `OIDC_REDIRECT_URI` und die Umleitungs-URI in Entra anpassen.
