@@ -75,6 +75,11 @@ ADMIN_PASSWORD='<Dein starkes Passwort für den ersten Administrator>'
 echo "PGPASS=$PGPASS"; echo "SECRET_KEY=$SECRET_KEY"   # JETZT in einen Passwort-Manager kopieren
 ```
 
+> **Wichtig, wenn Du das Terminal später neu öffnest:** `source azure.env` setzt `PGPASS` und `SECRET_KEY` dann auf **neue Zufallswerte**.
+> `SECRET_KEY` darf sich ändern, `PGPASS` aber **nicht**: Es muss dem Passwort entsprechen, mit dem der Datenbankserver angelegt wurde. Hast Du
+> den alten Wert nicht mehr, setze das Datenbank-Passwort auf den aktuellen Wert zurück (nach Schritt 5):
+> `az postgres flexible-server update --resource-group $RG --name $PG --admin-password "$PGPASS"`
+>
 > Schreibe `PGPASS`, `SECRET_KEY` und `ADMIN_PASSWORD` in Euren Passwort-Manager. Danach brauchst Du sie nur noch, wenn Du Dich
 > direkt mit der Datenbank verbinden willst (`PGPASS`). Wenn Du `SECRET_KEY` änderst, werden alle angemeldeten Nutzer abgemeldet.
 
@@ -211,6 +216,16 @@ az webapp config set --resource-group $RG --name $APP --acr-use-identity true --
 Rollenzuweisungen brauchen bis zu ein paar Minuten, bis sie wirken.
 
 **7c – Einstellungen der App:**
+
+Prüfe vorher, dass **alle** Variablen gefüllt sind. Eine leere Variable wird sonst als leere App-Einstellung gespeichert, und die App startet
+nicht (Meldung `DATABASE_URL ist leer oder ungültig`):
+
+```bash
+DATABASE_URL="postgresql+psycopg://$PGADMIN:$PGPASS@$PG.postgres.database.azure.com:5432/$DBNAME?sslmode=require"
+for v in DATABASE_URL SECRET_KEY ADMIN_PASSWORD PGPASS SA APP RG; do [ -z "${!v}" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
+```
+
+Steht nach „Prüfung beendet“ **kein** `FEHLT:` davor, kannst Du weitermachen.
 
 ```bash
 az webapp config appsettings set --resource-group $RG --name $APP --settings \
@@ -409,7 +424,9 @@ Du bei Problemen auf das vorherige Tag zurückstellen kannst. **Vor größeren U
 | `acr build` schlägt fehl mit Hinweis auf Tasks | ACR Tasks im Abonnement gesperrt, Alternative in Schritt 4 |
 | Name „bereits vergeben“ (ACR, Speicherkonto, Server, Web-App) | `SUFFIX` ändern und Schritt 2 wiederholen |
 | Web-App zeigt „Application Error“ oder 503 | `az webapp log tail`. Meist: Image konnte nicht geladen werden (Rolle `AcrPull` noch nicht wirksam, dann neu starten) oder falsche Einstellungen |
-| Log: `Produktivbetrieb: SECRET_KEY und ADMIN_PASSWORD müssen gesetzt werden` | Einstellung fehlt, Schritt 7c wiederholen. Mit PostgreSQL startet die App sonst absichtlich nicht |
+| Log: `DATABASE_URL ist leer oder ungültig` (ältere Version: `Could not parse SQLAlchemy URL`) | Die Einstellung `DATABASE_URL` ist leer oder falsch aufgebaut. Variablen prüfen und Schritt 7c wiederholen. Eingestellte Werte ansehen (ohne Geheimnisse): `az webapp config appsettings list --resource-group $RG --name $APP --query "[].{name:name, laenge:length(value)}" --output table`. Eine Länge von 0 bedeutet leer |
+| Log: `SECRET_KEY muss gesetzt sein und mindestens 32 Zeichen haben` oder `ADMIN_PASSWORD muss gesetzt sein` | Einstellung fehlt oder ist zu kurz, Schritt 7c wiederholen. Mit PostgreSQL startet die App sonst absichtlich nicht (`ADMIN_PASSWORD` wird nur beim allerersten Start geprüft) |
+| Log: `password authentication failed` | `PGPASS` stimmt nicht mit dem Passwort des Datenbankservers überein, siehe Hinweis in Schritt 2 (Passwort zurücksetzen) |
 | Log: Verbindungsfehler zur Datenbank / `timeout` | Die Firewall lässt die App nicht durch (nach Schritt 8b: neue ausgehende Adresse der Web-App fehlt, Schritt 8b Punkt 1 wiederholen). `DATABASE_URL` prüfen (Servername, Passwort, `?sslmode=require`). Server gestartet? |
 | Log: `Die Datenbank enthält Tabellen, wurde aber nicht mit Migrationen angelegt` | Es liegt eine Datenbank aus einer sehr alten Version vor. Neue, leere Datenbank verwenden |
 | Dokument ablegen oder herunterladen schlägt fehl (503 „Dokumentenspeicher“) | Rolle *Storage Blob Data Contributor* der Managed Identity fehlt oder noch nicht wirksam (Schritt 7b), oder `AZURE_STORAGE_ACCOUNT_URL` falsch |

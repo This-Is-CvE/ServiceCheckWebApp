@@ -87,5 +87,5 @@ def test_sso_user_cannot_be_edited_locally(client, auth, sso):
 
 def test_local_login_can_be_disabled(client, monkeypatch):
     monkeypatch.setattr(config, "AUTH_LOCAL_ENABLED", False)
-    r = client.post("/api/auth/login", data={"username": "admin", "password": "adminpass"})
+    r = client.post("/api/auth/login", data={"username": "admin", "password": "adminpass-123"})
     assert r.status_code == 403

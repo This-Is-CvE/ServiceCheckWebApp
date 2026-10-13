@@ -14,10 +14,9 @@ from .seed import seed_admin, seed_demo
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if engine.dialect.name != "sqlite" and (config.SECRET_KEY == "dev-only-change-me"
-                                            or (config.AUTH_LOCAL_ENABLED and config.ADMIN_PASSWORD == "admin")):
-        raise RuntimeError("Produktivbetrieb: SECRET_KEY und ADMIN_PASSWORD müssen gesetzt werden "
-                           "(keine Entwicklungs-Standardwerte).")
+    if engine.dialect.name != "sqlite" and (config.SECRET_KEY == "dev-only-change-me" or len(config.SECRET_KEY) < 32):
+        raise RuntimeError("Produktivbetrieb: SECRET_KEY muss gesetzt sein und mindestens 32 Zeichen haben "
+                           "(z. B. mit 'openssl rand -hex 32' erzeugen).")
     upgrade_db()
     with SessionLocal() as db:
         seed_admin(db)

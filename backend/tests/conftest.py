@@ -6,7 +6,7 @@ _tmp = tempfile.mkdtemp()
 os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL", f"sqlite:///{_tmp}/test.db")
 os.environ["SECRET_KEY"] = "test" * 10
 os.environ["SEED_DEMO_DATA"] = "1"
-os.environ["ADMIN_PASSWORD"] = "adminpass"
+os.environ["ADMIN_PASSWORD"] = "adminpass-123"
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pytest
@@ -23,6 +23,6 @@ def client():
 
 @pytest.fixture(scope="session")
 def auth(client):
-    r = client.post("/api/auth/login", data={"username": "admin", "password": "adminpass"})
+    r = client.post("/api/auth/login", data={"username": "admin", "password": "adminpass-123"})
     assert r.status_code == 200
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
