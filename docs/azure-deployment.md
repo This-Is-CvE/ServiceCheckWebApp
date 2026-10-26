@@ -147,14 +147,12 @@ Das dauert einige Minuten. Was die Einstellungen bedeuten:
   (`<name>.postgres.database.azure.com`) und bekommt **keine IP aus einem virtuellen Netz**. Die Regel erlaubt Verbindungen von
   **jeder** Azure-Ressource, auch von Ressourcen anderer Azure-Kunden. Geschützt bist Du dann durch Benutzername, Passwort und die
   erzwungene SSL-Verschlüsselung, nicht durch das Netzwerk. Für den ersten Start ist das ein üblicher Kompromiss. Strenger geht es mit
-  **Schritt 8b** (nur die Adressen Deiner Web-App) oder mit privatem Zugang (siehe unten). SSL ist bei Flexible Server standardmäßig Pflicht.
+  **Schritt 8b** (nur die Adressen Deiner Web-App) oder mit privatem Zugang (siehe unten und [azure-deployment-private.md](azure-deployment-private.md)). SSL ist bei Flexible Server standardmäßig Pflicht.
 - Gibt es für `Standard_B1ms` in Eurer Region keine Kapazität, wählt eine andere Region oder ein anderes SKU. `az postgres
   flexible-server list-skus --location $LOC` zeigt die möglichen Größen.
-- **Privater Zugang:** Wollt Ihr den Server ohne öffentlichen Endpunkt betreiben, legt Ihr ihn mit `--vnet` und `--subnet` in einem
-  virtuellen Netz an. Er bekommt dann eine **private IP** in einem dafür delegierten Subnetz plus eine private DNS-Zone, und die
-  Web-App wird per VNet-Integration angebunden. Alternativ gibt es einen Private Endpoint. Der Netzwerkmodus wird beim Anlegen gewählt.
-  Nach meinem Kenntnisstand lässt sich zwischen öffentlichem Zugang und VNet-Integration später nicht wechseln. Prüft das in der aktuellen
-  Microsoft-Dokumentation, bevor Ihr produktiv geht. Diese Variante ist aufwendiger und nicht Teil dieser Anleitung.
+- **Privater Zugang:** Wollt Ihr den Server ohne öffentlichen Endpunkt betreiben (private IP in einem virtuellen Netz, Web-App und Dokumentenspeicher
+  ebenfalls nur privat erreichbar), folgt Ihr stattdessen der Anleitung **[azure-deployment-private.md](azure-deployment-private.md)**. Sie ersetzt die Schritte 5,
+  7c bis 8b. Der Netzwerkmodus wird beim Anlegen des Servers gewählt und lässt sich nach meinem Kenntnisstand nachträglich nicht umstellen. Entscheidet das also vor Schritt 5.
 
 Die Datenbank-URL, die die App später braucht, setzt sich so zusammen:
 

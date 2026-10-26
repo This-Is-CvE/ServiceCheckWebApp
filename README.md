@@ -88,6 +88,7 @@ Das Logo liegt unter `backend/app/assets/logo.png` (PDF) und `frontend/public/lo
 * Mit PostgreSQL startet die App nur, wenn `SECRET_KEY` und `ADMIN_PASSWORD` gesetzt sind.
 * Sicherung/Wiederherstellung per `scripts/backup.sh` und `scripts/restore.sh` (pg_dump).
 * Betrieb in Azure (App Service, PostgreSQL Flexible Server, Blob Storage, Entra ID): **`docs/azure-deployment.md`**.
+  Variante mit privatem Netzwerk (Datenbank, Speicher und Web-App ohne öffentlichen Zugang): **`docs/azure-deployment-private.md`**.
 
 Tests gegen PostgreSQL: `TEST_DATABASE_URL=postgresql+psycopg://user@host/db pytest` (Datenbank wird nicht geleert, am besten eine leere Test-Datenbank nehmen).
 
