@@ -5,10 +5,11 @@ Ergebnis: Datenbank, Dokumentenspeicher **und die Web-App** haben keinen öffent
 virtuelles Netz in Azure und das daran angebundene Firmennetz.
 
 ```
-Firmennetz ──(VPN/Peering, Eure IT)──► virtuelles Netz  10.20.0.0/16
-                                        ├─ snet-pe   Private Endpoints: Web-App (Eingang), Blob Storage
-                                        ├─ snet-app  VNet-Integration der Web-App (ausgehend)
-                                        └─ snet-db   PostgreSQL (private IP)
+Firmennetz ──(VPN/Peering, Eure IT)──► virtuelles Netz  10.163.13.0/24
+                                        ├─ snet-db   10.163.13.0/27    PostgreSQL (private IP)
+                                        ├─ snet-app  10.163.13.32/27   VNet-Integration der Web-App (ausgehend)
+                                        ├─ snet-pe   10.163.13.64/27   Private Endpoints: Web-App (Eingang), Blob Storage
+                                        └─ frei      10.163.13.96 – .255  Reserve (z. B. VPN-Gateway, weitere Dienste)
 Öffentlich bleiben nur: Container Registry (Images ohne Personendaten) und die Azure-Verwaltung (az, Portal).
 ```
 
@@ -32,8 +33,21 @@ Firmennetz ──(VPN/Peering, Eure IT)──► virtuelles Netz  10.20.0.0/16
 
 ## Was Du vorher klären musst
 
-- **Adressbereich:** `10.20.0.0/16` ist ein Vorschlag. Der Bereich darf sich **nicht** mit Eurem Firmennetz oder anderen angebundenen Netzen
-  überschneiden. Frage Eure IT, bevor Du das Netz anlegst. Der Bereich lässt sich später nur mühsam ändern.
+- **Adressbereich:** Vorgesehen ist `10.163.13.0/24` (256 Adressen). **Bestätige mit der IT die Größe** des zugeteilten Bereichs (hier wird ein `/24` angenommen) und dass er
+  sich **nicht** mit dem Firmennetz oder anderen angebundenen Netzen überschneidet. Das Netz lässt sich später nur mühsam ändern.
+  Aufteilung in drei Subnetze mit je `/27` (32 Adressen, davon 27 nutzbar, Azure reserviert je 5):
+
+  | Subnetz | Bereich | Nutzbare Adressen |
+  |---|---|---|
+  | `snet-db` | `10.163.13.0/27` | `.4` bis `.30` |
+  | `snet-app` | `10.163.13.32/27` | `.36` bis `.62` |
+  | `snet-pe` | `10.163.13.64/27` | `.68` bis `.94` |
+  | frei | `10.163.13.96/27` bis `10.163.13.255` | Reserve, z. B. für ein `GatewaySubnet` (`/27`) |
+
+  Das sind 96 von 256 Adressen, 160 bleiben frei. Mindestgrößen: Das Datenbank-Subnetz und das App-Subnetz brauchen mindestens `/28`, das reicht für Euren Betrieb, `/27` lässt aber
+  Platz zum Wachsen (zusätzliche App-Instanzen, eine Wiederherstellung neben dem laufenden Server). **Ist der zugeteilte Bereich kleiner als `/24`:** Mit einem `/26` (64 Adressen)
+  geht die Aufteilung gerade noch mit drei Subnetzen à `/28` (`10.163.13.0/28`, `.16/28`, `.32/28`). Das ist knapp und lässt keinen Platz für ein VPN-Gateway. Sprich dann
+  vorher mit der IT über einen größeren Bereich.
 - **Anbindung des Firmennetzes und DNS:** Wie kommen die Arbeitsplätze zum virtuellen Netz (Site-to-Site-VPN, ExpressRoute, Peering zu einem
   vorhandenen Hub, oder VPN pro Benutzer) und wie lösen sie den Namen der App auf (Schritt P10)? **Das ist die größte Abhängigkeit.** Ohne diese
   Anbindung kann niemand die App aufrufen, nachdem der öffentliche Zugang abgeschaltet ist.
@@ -57,10 +71,10 @@ Zu den Variablen aus Schritt 2 der Hauptanleitung kommen diese hinzu (in `azure.
 
 ```bash
 VNET=vnet-servicecheck
-VNET_CIDR=10.20.0.0/16                      # mit der IT abstimmen!
-SNET_DB=snet-db;   SNET_DB_CIDR=10.20.1.0/24
-SNET_APP=snet-app; SNET_APP_CIDR=10.20.2.0/24
-SNET_PE=snet-pe;   SNET_PE_CIDR=10.20.3.0/24
+VNET_CIDR=10.163.13.0/24                    # von der IT zugeteilter Bereich, Größe bestätigen lassen
+SNET_DB=snet-db;   SNET_DB_CIDR=10.163.13.0/27
+SNET_APP=snet-app; SNET_APP_CIDR=10.163.13.32/27
+SNET_PE=snet-pe;   SNET_PE_CIDR=10.163.13.64/27
 ZONE_PG=servicecheck.private.postgres.database.azure.com   # muss auf .private.postgres.database.azure.com enden
 ZONE_BLOB=privatelink.blob.core.windows.net
 ZONE_APP=privatelink.azurewebsites.net
@@ -169,7 +183,7 @@ az webapp config appsettings set --resource-group $RG --name $APP --settings \
 az webapp restart --resource-group $RG --name $APP
 ```
 
-Verbindungen zu privaten Adressen (10.x.x.x) laufen automatisch durch das Netz. Die Web-App ist an dieser Stelle **noch öffentlich erreichbar**, damit Du
+Verbindungen zu privaten Adressen (hier 10.163.13.x) laufen automatisch durch das Netz. Die Web-App ist an dieser Stelle **noch öffentlich erreichbar**, damit Du
 Datenbank und Dokumente zuerst testen kannst:
 
 ```bash
@@ -211,7 +225,7 @@ az vm run-command invoke --resource-group $RG_TEST --name vm-nettest --command-i
   --scripts "getent hosts $APP.azurewebsites.net; curl -s https://$APP.azurewebsites.net/api/health"
 ```
 
-Erwartet: Der Name löst auf eine Adresse im Bereich **10.20.3.x** auf, und die Antwort ist `{"status":"ok"}`. Steht dort eine öffentliche Adresse, ist die
+Erwartet: Der Name löst auf eine Adresse im Bereich **10.163.13.68 bis .94** (Subnetz `snet-pe`) auf, und die Antwort ist `{"status":"ok"}`. Steht dort eine öffentliche Adresse, ist die
 DNS-Zone nicht (richtig) mit dem Netz verknüpft (Schritt P3 und P7 prüfen). Ist die gewünschte Größe in Eurer Region nicht verfügbar, wähle eine andere.
 
 ## Schritt P9 – Öffentlichen Zugang der Web-App abschalten
@@ -236,7 +250,7 @@ Wenn Du nach diesem Schritt nicht mehr an die App kommst, ist das Absicht. Mit `
 
 Das Azure-Ende ist fertig. Damit Eure Mitarbeiter die App öffnen können, muss die IT zwei Dinge einrichten. Die Befehle hängen von Eurer Umgebung ab:
 
-1. **Netzwerkverbindung** zwischen Firmennetz und dem virtuellen Netz `10.20.0.0/16`: Site-to-Site-VPN, ExpressRoute, Peering zu einem vorhandenen
+1. **Netzwerkverbindung** zwischen Firmennetz und dem virtuellen Netz `10.163.13.0/24`: Site-to-Site-VPN, ExpressRoute, Peering zu einem vorhandenen
    Hub-Netz oder ein VPN pro Benutzer (Point-to-Site) in dieses Netz.
 2. **Namensauflösung:** Der Name `$APP.azurewebsites.net` muss bei Euren Arbeitsplätzen auf die **private** Adresse zeigen. Üblich ist eine bedingte
    Weiterleitung (Conditional Forwarder) im Firmen-DNS für `azurewebsites.net` an einen DNS-Resolver im virtuellen Netz (z. B. Azure DNS Private Resolver),
@@ -275,7 +289,7 @@ Die Test-VM kostet laufend Geld. Lösche sie, sobald der Test abgeschlossen ist.
 | App-Log: `could not translate host name` oder `Name or service not known` (Datenbank) | Private DNS-Zone der Datenbank nicht mit dem Netz verknüpft (Schritt P3), App nicht in das Netz integriert (Schritt P6), oder `$PG_HOST` falsch (aus `fullyQualifiedDomainName` übernehmen) |
 | App-Log: Timeout zur Datenbank | VNet-Integration fehlt oder zeigt auf das falsche Subnetz, Datenbank-Subnetz nicht an PostgreSQL delegiert (Schritt P2), oder eine Netzwerksicherheitsgruppe blockiert Port 5432 |
 | `az webapp vnet-integration add` schlägt fehl | Subnetz nicht an `Microsoft.Web/serverFarms` delegiert oder bereits von einem anderen App-Service-Plan belegt. Netz und Plan müssen in derselben Region liegen |
-| Dokumente ablegen/abrufen liefert 503 („Dokumentenspeicher“) | Private Endpoint oder DNS-Zone des Blob-Speichers fehlt (Schritt P5, `getent hosts $SA.blob.core.windows.net` aus dem Netz muss eine 10.20.3.x liefern). Rollenzuweisung der Managed Identity unverändert prüfen |
+| Dokumente ablegen/abrufen liefert 503 („Dokumentenspeicher“) | Private Endpoint oder DNS-Zone des Blob-Speichers fehlt (Schritt P5, `getent hosts $SA.blob.core.windows.net` aus dem Netz muss eine Adresse aus 10.163.13.68–.94 liefern). Rollenzuweisung der Managed Identity unverändert prüfen |
 | Browser: „403 – Web App – Unavailable“ oder keine Seite | Der Name zeigt noch auf die öffentliche Adresse (DNS im Firmennetz, Schritt P10), oder die Verbindung ins Netz fehlt |
 | `az webapp log tail` hängt oder liefert nichts | Verwaltungsadresse nur im Netz erreichbar, siehe Schritt P11 |
 | `az postgres flexible-server create` meldet eine fehlerhafte DNS-Zone | Der Zonenname muss auf `.private.postgres.database.azure.com` enden und im selben Abonnement/Ressourcengruppe liegen (oder die volle Ressourcen-ID verwenden) |
