@@ -51,6 +51,7 @@ Firmennetz ──(VPN/Peering, Eure IT)──► virtuelles Netz  10.163.13.0/24
 - **Anbindung des Firmennetzes und DNS:** Wie kommen die Arbeitsplätze zum virtuellen Netz (Site-to-Site-VPN, ExpressRoute, Peering zu einem
   vorhandenen Hub, oder VPN pro Benutzer) und wie lösen sie den Namen der App auf (Schritt P10)? **Das ist die größte Abhängigkeit.** Ohne diese
   Anbindung kann niemand die App aufrufen, nachdem der öffentliche Zugang abgeschaltet ist.
+- **Netz in anderer Ressourcengruppe:** Liegt das Netz in einer anderen Gruppe als die Anwendung (`$RG_NET` gegenüber `$RG`), brauchst Du dort Rechte, Subnetze zu verwenden (Schritt P2).
 - **Rechte:** Du brauchst Rechte für Netzwerkressourcen und private DNS-Zonen (z. B. *Mitwirkender* auf der Ressourcengruppe; für Subnetz-Delegierungen
   ist die Rolle *Netzwerkmitwirkender* üblich).
 - **Region:** Virtuelles Netz, App-Service-Plan, Datenbank und Speicherkonto müssen in **derselben Region** liegen (`$LOC`).
@@ -70,7 +71,8 @@ az postgres flexible-server delete --resource-group $RG --name $PG --yes
 Zu den Variablen aus Schritt 2 der Hauptanleitung kommen diese hinzu (in `azure.env` ergänzen):
 
 ```bash
-VNET=vnet-servicecheck
+RG_NET='HIER-EINTRAGEN'                          # Ressourcengruppe, in der das virtuelle Netz liegt (kann von $RG abweichen)
+VNET=vnet-servicecheck                      # Name des Netzes in $RG_NET
 VNET_CIDR=10.163.13.0/24                    # von der IT zugeteilter Bereich, Größe bestätigen lassen
 SNET_DB=snet-db;   SNET_DB_CIDR=10.163.13.0/27
 SNET_APP=snet-app; SNET_APP_CIDR=10.163.13.32/27
@@ -80,18 +82,53 @@ ZONE_BLOB=privatelink.blob.core.windows.net
 ZONE_APP=privatelink.azurewebsites.net
 ```
 
-## Schritt P2 – Virtuelles Netz und Subnetze
+## Schritt P2 – Virtuelles Netz und Subnetze (Netz in einer eigenen Ressourcengruppe)
+
+Das virtuelle Netz liegt in der Ressourcengruppe `$RG_NET`, die Anwendung (App, Datenbank, Speicher, DNS-Zonen, Private Endpoints) in `$RG`. Weil Azure einen bloßen
+Netznamen nur in der **eigenen** Ressourcengruppe sucht, arbeiten alle folgenden Schritte mit den **Ressourcen-IDs** von Netz und Subnetzen. Du löst sie hier **einmal** auf:
 
 ```bash
-az network vnet create --resource-group $RG --name $VNET --location $LOC --address-prefixes $VNET_CIDR
+VNET_ID=$(az network vnet show --resource-group $RG_NET --name $VNET --query id --output tsv)
+SUBNET_DB_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_DB --query id --output tsv)
+SUBNET_APP_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_APP --query id --output tsv)
+SUBNET_PE_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_PE --query id --output tsv)
+for v in VNET_ID SUBNET_DB_ID SUBNET_APP_ID SUBNET_PE_ID; do [ -z "${!v}" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
+```
 
-az network vnet subnet create --resource-group $RG --vnet-name $VNET --name $SNET_DB \
+Ist das Netz schon angelegt (z. B. von der IT), prüfst Du es:
+
+```bash
+az network vnet show --resource-group $RG_NET --name $VNET \
+  --query "{name:name, region:location, bereich:addressSpace.addressPrefixes[0]}" --output table
+
+az network vnet subnet list --resource-group $RG_NET --vnet-name $VNET \
+  --query "[].{name:name, bereich:addressPrefix, delegation:delegations[0].serviceName}" --output table
+```
+
+Erwartet: Region wie `$LOC`, `snet-db` mit Delegierung `Microsoft.DBforPostgreSQL/flexibleServers`, `snet-app` mit `Microsoft.Web/serverFarms`, `snet-pe` ohne Delegierung.
+Fehlt eine Delegierung, hole sie nach:
+
+```bash
+az network vnet subnet update --resource-group $RG_NET --vnet-name $VNET --name $SNET_DB  --delegations Microsoft.DBforPostgreSQL/flexibleServers
+az network vnet subnet update --resource-group $RG_NET --vnet-name $VNET --name $SNET_APP --delegations Microsoft.Web/serverFarms
+```
+
+**Rechte:** Mit den IDs greifst Du auf Ressourcen einer **fremden Ressourcengruppe** zu. Dein Konto braucht dort das Recht, Subnetze zu verwenden. Üblich ist die Rolle
+*Netzwerkmitwirkender* auf der Gruppe `$RG_NET` oder auf dem Netz (nach meinem Kenntnisstand genügt mindestens das Recht `Microsoft.Network/virtualNetworks/subnets/join/action`).
+Fehlt es, scheitern Datenbank, Private Endpoints und die VNet-Integration mit einer Meldung zu `AuthorizationFailed` oder `LinkedAuthorizationFailed`. Bitte dann die IT um die Rolle.
+
+Legst Du das Netz selbst an (statt es von der IT zu bekommen), gilt:
+
+```bash
+az network vnet create --resource-group $RG_NET --name $VNET --location $LOC --address-prefixes $VNET_CIDR
+
+az network vnet subnet create --resource-group $RG_NET --vnet-name $VNET --name $SNET_DB \
   --address-prefixes $SNET_DB_CIDR --delegations Microsoft.DBforPostgreSQL/flexibleServers
 
-az network vnet subnet create --resource-group $RG --vnet-name $VNET --name $SNET_APP \
+az network vnet subnet create --resource-group $RG_NET --vnet-name $VNET --name $SNET_APP \
   --address-prefixes $SNET_APP_CIDR --delegations Microsoft.Web/serverFarms
 
-az network vnet subnet create --resource-group $RG --vnet-name $VNET --name $SNET_PE \
+az network vnet subnet create --resource-group $RG_NET --vnet-name $VNET --name $SNET_PE \
   --address-prefixes $SNET_PE_CIDR
 ```
 
@@ -105,14 +142,13 @@ Innerhalb des Netzes lösen die privaten Zonen die Namen auf die privaten Adress
 for ZONE in $ZONE_PG $ZONE_BLOB $ZONE_APP; do
   az network private-dns zone create --resource-group $RG --name $ZONE
   az network private-dns link vnet create --resource-group $RG --zone-name $ZONE \
-    --name "link-$VNET" --virtual-network $VNET --registration-enabled false
+    --name "link-$VNET" --virtual-network $VNET_ID --registration-enabled false
 done
 ```
 
 ## Schritt P4 – PostgreSQL mit privatem Zugang
 
 ```bash
-SUBNET_DB_ID=$(az network vnet subnet show --resource-group $RG --vnet-name $VNET --name $SNET_DB --query id --output tsv)
 ZONE_PG_ID=$(az network private-dns zone show --resource-group $RG --name $ZONE_PG --query id --output tsv)
 
 az postgres flexible-server create \
@@ -138,10 +174,9 @@ DATABASE_URL="postgresql+psycopg://$PGADMIN:$PGPASS@$PG_HOST:5432/$DBNAME?sslmod
 ## Schritt P5 – Blob Storage nur über Private Endpoint
 
 ```bash
-SUBNET_PE_ID=$(az network vnet subnet show --resource-group $RG --vnet-name $VNET --name $SNET_PE --query id --output tsv)
 SA_ID=$(az storage account show --resource-group $RG --name $SA --query id --output tsv)
 
-az network private-endpoint create --resource-group $RG --name pe-blob --vnet-name $VNET --subnet $SNET_PE \
+az network private-endpoint create --resource-group $RG --name pe-blob --subnet $SUBNET_PE_ID \
   --private-connection-resource-id $SA_ID --group-id blob --connection-name pe-blob-conn
 
 az network private-endpoint dns-zone-group create --resource-group $RG --endpoint-name pe-blob \
@@ -158,14 +193,14 @@ az storage account update --resource-group $RG --name $SA --public-network-acces
 ## Schritt P6 – Web-App ausgehend ins Netz hängen, Einstellungen setzen
 
 ```bash
-az webapp vnet-integration add --resource-group $RG --name $APP --vnet $VNET --subnet $SNET_APP
+az webapp vnet-integration add --resource-group $RG --name $APP --vnet $VNET_ID --subnet $SUBNET_APP_ID
 ```
 
 Die App-Einstellungen entsprechen Schritt 7c der Hauptanleitung, nur mit der `DATABASE_URL` aus Schritt P4. Prüfe zuerst, dass alle Variablen gefüllt sind
 (eine leere Variable würde als leere Einstellung gespeichert und die App am Start hindern):
 
 ```bash
-for v in DATABASE_URL SECRET_KEY ADMIN_PASSWORD PGPASS SA APP RG PG_HOST; do [ -z "${!v}" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
+for v in DATABASE_URL SECRET_KEY ADMIN_PASSWORD PGPASS SA APP RG PG_HOST VNET_ID SUBNET_APP_ID; do [ -z "${!v}" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
 ```
 
 ```bash
@@ -198,7 +233,7 @@ Datenbank (privat) und Blob Storage (privat) über das Netz.
 ```bash
 APP_ID=$(az webapp show --resource-group $RG --name $APP --query id --output tsv)
 
-az network private-endpoint create --resource-group $RG --name pe-app --vnet-name $VNET --subnet $SNET_PE \
+az network private-endpoint create --resource-group $RG --name pe-app --subnet $SUBNET_PE_ID \
   --private-connection-resource-id $APP_ID --group-id sites --connection-name pe-app-conn
 
 az network private-endpoint dns-zone-group create --resource-group $RG --endpoint-name pe-app \
