@@ -13,6 +13,9 @@ Firmennetz ──(VPN/Peering, Eure IT)──► virtuelles Netz  10.163.13.0/24
 Öffentlich bleiben nur: Container Registry (Images ohne Personendaten) und die Azure-Verwaltung (az, Portal).
 ```
 
+> **Mac:** Voraussetzungen, Installation und die nötige zsh-Einstellung (`setopt interactive_comments`) stehen in [azure-voraussetzungen-mac.md](azure-voraussetzungen-mac.md).
+> Die Variablen legst Du mit der Vorlage [azure.env.example](azure.env.example) in `~/azure.env` an.
+>
 > **Geprüft und nicht geprüft:** Jeden `az`-Befehl habe ich gegen die Azure-CLI abgeglichen (Befehle und Parameter existieren). Ausgeführt
 > gegen ein Azure-Abonnement habe ich ihn nicht. Am anfälligsten sind **Namensauflösung (DNS)** und die **Anbindung Eures Firmennetzes**.
 > Beides hängt von Eurer Umgebung ab, deshalb gibt es unten Prüfschritte und eine Fehlersuche. Am Code der App ändert sich nichts.
@@ -92,7 +95,7 @@ VNET_ID=$(az network vnet show --resource-group $RG_NET --name $VNET --query id 
 SUBNET_DB_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_DB --query id --output tsv)
 SUBNET_APP_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_APP --query id --output tsv)
 SUBNET_PE_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_PE --query id --output tsv)
-for v in VNET_ID SUBNET_DB_ID SUBNET_APP_ID SUBNET_PE_ID; do [ -z "${!v}" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
+for v in VNET_ID SUBNET_DB_ID SUBNET_APP_ID SUBNET_PE_ID; do eval "val=\${$v}"; [ -z "$val" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
 ```
 
 Ist das Netz schon angelegt (z. B. von der IT), prüfst Du es:
@@ -200,7 +203,7 @@ Die App-Einstellungen entsprechen Schritt 7c der Hauptanleitung, nur mit der `DA
 (eine leere Variable würde als leere Einstellung gespeichert und die App am Start hindern):
 
 ```bash
-for v in DATABASE_URL SECRET_KEY ADMIN_PASSWORD PGPASS SA APP RG PG_HOST VNET_ID SUBNET_APP_ID; do [ -z "${!v}" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
+for v in DATABASE_URL SECRET_KEY ADMIN_PASSWORD PGPASS SA APP RG PG_HOST VNET_ID SUBNET_APP_ID; do eval "val=\${$v}"; [ -z "$val" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
 ```
 
 ```bash

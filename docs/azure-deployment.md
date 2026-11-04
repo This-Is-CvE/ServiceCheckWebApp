@@ -26,18 +26,20 @@ Ziel: Die App läuft mit PostgreSQL als Datenbank, Dokumenten im Blob Storage un
   Ressourcengruppe. Rollenzuweisungen für die Managed Identity in Schritt 7 brauchen diese Rechte.
 - Für Schritt 9 (Entra-App-Registrierung) Rechte im Entra-Admin-Center, z. B. die Rolle *Anwendungsentwickler* oder
   *Cloudanwendungsadministrator*. Wenn Du sie nicht hast, schick Deiner IT die Beschreibung aus Schritt 9.
-- Auf Deinem Rechner: **Git Bash** (hast Du schon), die **Azure-CLI** und `openssl` (ist in Git Bash dabei).
-- Das Projekt als Ordner auf Deinem Rechner (`~/ServiceCheckWebApp`) mit dem aktuellen Stand (`git pull`).
+- Auf Deinem **Mac**: Homebrew, die **Azure-CLI**, `openssl` und `curl` (sind im Mac enthalten) sowie die richtige zsh-Einstellung. **Alle Voraussetzungen, die Installation und die Prüfung stehen in
+  [azure-voraussetzungen-mac.md](azure-voraussetzungen-mac.md).** Lies zuerst diese Seite.
+- Den Quellcode (`git`) brauchst Du nur, wenn Du das Image neu bauen willst (Schritt 4 und 12).
 
 ## Schritt 1 – Azure-CLI installieren und anmelden
 
-Installation unter Windows (PowerShell oder Eingabeaufforderung, einmalig; danach Git Bash neu öffnen):
+Installation auf dem Mac (einmalig, Details in [azure-voraussetzungen-mac.md](azure-voraussetzungen-mac.md)):
 
-```
-winget install -e --id Microsoft.AzureCLI
+```bash
+brew update
+brew install azure-cli
 ```
 
-In Git Bash:
+Im Terminal:
 
 ```bash
 az login
@@ -50,13 +52,14 @@ Notiere Dir die **Mandanten-ID** (`tenantId`), Du brauchst sie in Schritt 9.
 
 ## Schritt 2 – Namen und Geheimnisse festlegen
 
-Alle folgenden Befehle benutzen diese Variablen. **Setze sie in jedem neuen Terminal erneut**, am besten, indem Du den Block in eine
-Datei `azure.env` außerhalb des Projekts (oder im Projekt, sie ist per `.gitignore` ausgeschlossen) speicherst und mit
-`source azure.env` lädst.
+Alle folgenden Befehle benutzen diese Variablen. **Setze sie in jedem neuen Terminal erneut**, am besten, indem Du sie in eine
+Datei `~/azure.env` speicherst (Vorlage: [azure.env.example](azure.env.example), Anleitung in [azure-voraussetzungen-mac.md](azure-voraussetzungen-mac.md)) und mit
+`source ~/azure.env` lädst.
+
+> **Mac (zsh):** Führe einmalig `setopt interactive_comments` aus (Details in der Voraussetzungs-Seite). Sonst gilt `# Kommentar` beim Einfügen in zsh nicht als Kommentar, und eine
+> Zeile wie `RG=x   # Gruppe` setzt die Variable **nicht**.
 
 ```bash
-export MSYS_NO_PATHCONV=1               # Git Bash unter Windows: verhindert, dass "/api/health" & Co. umgeschrieben werden
-
 SUFFIX=pco1                             # kurz, nur Kleinbuchstaben/Ziffern, max. 6 Zeichen; macht die Namen weltweit eindeutig
 RG=rg-servicecheck
 LOC=germanywestcentral
@@ -220,7 +223,7 @@ nicht (Meldung `DATABASE_URL ist leer oder ungültig`):
 
 ```bash
 DATABASE_URL="postgresql+psycopg://$PGADMIN:$PGPASS@$PG.postgres.database.azure.com:5432/$DBNAME?sslmode=require"
-for v in DATABASE_URL SECRET_KEY ADMIN_PASSWORD PGPASS SA APP RG; do [ -z "${!v}" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
+for v in DATABASE_URL SECRET_KEY ADMIN_PASSWORD PGPASS SA APP RG; do eval "val=\${$v}"; [ -z "$val" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
 ```
 
 Steht nach „Prüfung beendet“ **kein** `FEHLT:` davor, kannst Du weitermachen.
@@ -323,7 +326,7 @@ sie Deiner IT mit.
 6. **Unternehmensanwendungen → Service Check → Benutzer und Gruppen → Benutzer/Gruppe hinzufügen:** Benutzer oder Gruppen auswählen
    und jeweils eine Rolle zuweisen. (Gruppen lassen sich nur mit einer Entra-ID-P1/P2-Lizenz zuweisen, sonst einzelne Benutzer.)
    Weise **Dir selbst** zuerst `Service Check Administrator` zu.
-7. Zurück in Git Bash die Werte in der App hinterlegen:
+7. Zurück im Terminal die Werte in der App hinterlegen:
 
 ```bash
 TENANT_ID="<Verzeichnis-ID aus Schritt 2>"
@@ -418,7 +421,7 @@ Du bei Problemen auf das vorherige Tag zurückstellen kannst. **Vor größeren U
 | Symptom | Mögliche Ursache und Abhilfe |
 |---|---|
 | `MissingSubscriptionRegistration` | Dienst-Registrierung fehlt, siehe Schritt 3 |
-| `acr build` bricht mit `sh: tsc: Permission denied` (Exit 126) ab | Das lokale `node_modules` aus Windows wurde ins Image kopiert und hat das Ausführrecht von `tsc` verloren. Mit dem aktuellen Stand nicht mehr möglich (`git pull`, danach `acr build` wiederholen) |
+| `acr build` bricht mit `sh: tsc: Permission denied` (Exit 126) ab | Ein lokales `node_modules` (z. B. von einem anderen Rechner oder Betriebssystem) wurde ins Image kopiert und hat das Ausführrecht von `tsc` verloren. Mit dem aktuellen Stand nicht mehr möglich (`git pull`, danach `acr build` wiederholen) |
 | `acr build` schlägt fehl mit Hinweis auf Tasks | ACR Tasks im Abonnement gesperrt, Alternative in Schritt 4 |
 | Name „bereits vergeben“ (ACR, Speicherkonto, Server, Web-App) | `SUFFIX` ändern und Schritt 2 wiederholen |
 | Web-App zeigt „Application Error“ oder 503 | `az webapp log tail`. Meist: Image konnte nicht geladen werden (Rolle `AcrPull` noch nicht wirksam, dann neu starten) oder falsche Einstellungen |
