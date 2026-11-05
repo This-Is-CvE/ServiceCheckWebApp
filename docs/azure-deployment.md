@@ -67,6 +67,7 @@ ACR=acrservicecheck$SUFFIX              # nur Kleinbuchstaben/Ziffern
 PG=pg-servicecheck-$SUFFIX
 SA=stservicecheck$SUFFIX                # Speicherkonto: 3–24 Zeichen, nur Kleinbuchstaben/Ziffern
 PLAN=plan-servicecheck
+PLAN_SKU=P0V3                           # Stufe des App-Service-Plans; bei Kontingentfehler S1 oder P1V3 versuchen (Schritt 7a)
 APP=app-servicecheck-$SUFFIX            # die Adresse wird https://$APP.azurewebsites.net
 DBNAME=servicecheck
 PGADMIN=scadmin
@@ -151,7 +152,7 @@ Das dauert einige Minuten. Was die Einstellungen bedeuten:
   **jeder** Azure-Ressource, auch von Ressourcen anderer Azure-Kunden. Geschützt bist Du dann durch Benutzername, Passwort und die
   erzwungene SSL-Verschlüsselung, nicht durch das Netzwerk. Für den ersten Start ist das ein üblicher Kompromiss. Strenger geht es mit
   **Schritt 8b** (nur die Adressen Deiner Web-App) oder mit privatem Zugang (siehe unten und [azure-deployment-private.md](azure-deployment-private.md)). SSL ist bei Flexible Server standardmäßig Pflicht.
-- Gibt es für `Standard_B1ms` in Eurer Region keine Kapazität, wählt eine andere Region oder ein anderes SKU. `az postgres
+- Gibt es für `Standard_B1ms` in Eurer Region keine Kapazität (oder ist die Burstable-Serie dort als veraltet gekennzeichnet), wählt ein anderes SKU: `az postgres flexible-server list-skus --location $LOC --output table` zeigt, was verfügbar ist. Oder wählt eine andere Region. `az postgres
   flexible-server list-skus --location $LOC` zeigt die möglichen Größen.
 - **Privater Zugang:** Wollt Ihr den Server ohne öffentlichen Endpunkt betreiben (private IP in einem virtuellen Netz, Web-App und Dokumentenspeicher
   ebenfalls nur privat erreichbar), folgt Ihr stattdessen der Anleitung **[azure-deployment-private.md](azure-deployment-private.md)**. Sie ersetzt die Schritte 5,
@@ -191,7 +192,7 @@ az storage account blob-service-properties update \
 **7a – Plan und Web-App mit Managed Identity:**
 
 ```bash
-az appservice plan create --resource-group $RG --name $PLAN --is-linux --sku B1 --location $LOC
+az appservice plan create --resource-group $RG --name $PLAN --is-linux --sku $PLAN_SKU --location $LOC
 
 az webapp create --resource-group $RG --plan $PLAN --name $APP \
   --container-image-name $ACR.azurecr.io/servicecheck:1 \
@@ -200,6 +201,10 @@ az webapp create --resource-group $RG --plan $PLAN --name $APP \
 az webapp update --resource-group $RG --name $APP --https-only true
 az webapp config set --resource-group $RG --name $APP --always-on true --min-tls-version 1.2 --ftps-state Disabled
 ```
+
+> **Kontingent:** Neue oder Test-Abonnements haben für manche Stufen in manchen Regionen ein Kontingent von **0** (Meldung `Current Limit (B1 VMs): 0`). Probiere dann `PLAN_SKU=S1` oder `P1V3`,
+> oder lass das Kontingent erhöhen. Die Region muss bei der privaten Variante die des virtuellen Netzes bleiben. Die Kontingente für **virtuelle Maschinen** (Seite *Nutzung + Kontingente*, Anbieter *Compute*)
+> sind davon getrennt: Dort ist die Familie `Standard BS` (Bv1) als *End of Life* gekennzeichnet. Das betrifft nur VMs, nicht den App-Service-Plan.
 
 **7b – Rechte für die Managed Identity** (die App braucht keine Passwörter für Registry und Dokumentenspeicher):
 
@@ -421,6 +426,7 @@ Du bei Problemen auf das vorherige Tag zurückstellen kannst. **Vor größeren U
 | Symptom | Mögliche Ursache und Abhilfe |
 |---|---|
 | `MissingSubscriptionRegistration` | Dienst-Registrierung fehlt, siehe Schritt 3 |
+| `az appservice plan create` meldet `Operation cannot be completed without additional quota` (`Current Limit (B1 VMs): 0`) | Das Kontingent für diese Stufe ist in Eurem Abonnement und dieser Region 0. Eine andere Stufe versuchen (`PLAN_SKU=S1` oder `P1V3`) oder im Portal unter *Abonnements → Nutzung + Kontingente* bzw. per Supportanfrage (Kontingenttyp App Service) erhöhen lassen. Die Region muss die des Netzes bleiben |
 | `acr build` bricht mit `sh: tsc: Permission denied` (Exit 126) ab | Ein lokales `node_modules` (z. B. von einem anderen Rechner oder Betriebssystem) wurde ins Image kopiert und hat das Ausführrecht von `tsc` verloren. Mit dem aktuellen Stand nicht mehr möglich (`git pull`, danach `acr build` wiederholen) |
 | `acr build` schlägt fehl mit Hinweis auf Tasks | ACR Tasks im Abonnement gesperrt, Alternative in Schritt 4 |
 | Name „bereits vergeben“ (ACR, Speicherkonto, Server, Web-App) | `SUFFIX` ändern und Schritt 2 wiederholen |

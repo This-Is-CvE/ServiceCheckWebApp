@@ -247,6 +247,19 @@ Der Private Endpoint gilt auch für die Verwaltungsadresse der App (`$APP.scm.az
 
 ## Schritt P8 – Privaten Zugang testen, bevor der öffentliche abgeschaltet wird
 
+**VM-Größe:** Die frühere B-Serie (`Standard_B1s`, Familie *Standard BS*, Bv1) ist im Portal (*Nutzung + Kontingente*, Anbieter *Compute*) als **End of Life** gekennzeichnet. Wähle eine Größe der
+neuen Serien. Welche in Eurer Region verfügbar sind, zeigt:
+
+```bash
+az vm list-sizes --location $LOC --query "[?starts_with(name,'Standard_B') && contains(name,'_v2')].name" --output tsv
+```
+
+Nimm eine **ohne `p` im Namen** (mit `p` sind es Arm-Prozessoren, auf denen das Ubuntu-Abbild unten nicht läuft), z. B. `Standard_B2ts_v2` oder `Standard_B2ats_v2`, sofern aufgelistet:
+
+```bash
+VM_SIZE=Standard_B2ts_v2
+```
+
 Du brauchst einen Rechner **im** virtuellen Netz. Am einfachsten ist eine kleine, kurzlebige Linux-VM ohne öffentliche Adresse in einer eigenen Ressourcengruppe.
 Du steuerst sie über die Verwaltungsschnittstelle, ohne SSH:
 
@@ -255,7 +268,7 @@ RG_TEST=rg-servicecheck-test
 az group create --name $RG_TEST --location $LOC
 
 az vm create --resource-group $RG_TEST --name vm-nettest \
-  --image Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest --size Standard_B1s \
+  --image Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest --size $VM_SIZE \
   --subnet $SUBNET_PE_ID --public-ip-address "" --nsg-rule NONE \
   --admin-username azureuser --generate-ssh-keys
 
