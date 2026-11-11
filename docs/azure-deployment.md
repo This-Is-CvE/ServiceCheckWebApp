@@ -480,6 +480,60 @@ az webapp config set --resource-group $RG --name $APP --acr-use-identity true --
 
 Rollenzuweisungen brauchen bis zu ein paar Minuten, bis sie wirken. Bis dahin kann die App ihr Image nicht laden (`ImagePullUnauthorizedFailure` im Protokoll). Das erledigt sich mit dem Neustart in Schritt 13.
 
+**Prüfe, dass die Rollen wirklich vergeben sind.** Das ist eine der häufigsten Stolperstellen, denn die Meldung der beiden Befehle oben ist leicht zu übersehen:
+
+```bash
+az role assignment list --assignee-object-id $PRINCIPAL --all --output table
+```
+
+Es müssen **zwei Zeilen** erscheinen: `AcrPull` auf Eurer Registry und `Storage Blob Data Contributor` auf Eurem Speicherkonto. Ist die Liste **leer**, oder meldete der Befehl `AuthorizationFailed ... roleAssignments/write`, darfst Du keine Rollen vergeben.
+Mit der Rolle *Mitwirkender* (Contributor) kannst Du Ressourcen anlegen, aber **keine Rollen vergeben**. Dafür braucht es *Besitzer*, *Benutzerzugriffsadministrator* oder (nach meinem Kenntnisstand, mit eingeschränkten Rechten) *Role Based Access Control Administrator* auf der Ressourcengruppe.
+Ohne diese Rollen kann die App ihr Image nicht laden (`ACRTokenRetrievalFailure` im Protokoll) und keine Dokumente speichern.
+
+**Weg 1 (richtig): Die IT vergibt die zwei Rollen.** Gib ihr diese Angaben (Werte mit den Befehlen darunter auslesen):
+
+> Bitte folgende Rollenzuweisungen vergeben. Prinzipal: Managed Identity der Web-App `<APP>`, Objekt-ID `<PRINCIPAL>`, Typ *ServicePrincipal*.
+> 1. Rolle **AcrPull** auf der Container Registry `<ACR>` (Ressourcen-ID `<ACR_ID>`)
+> 2. Rolle **Storage Blob Data Contributor** auf dem Speicherkonto `<SA>` (Ressourcen-ID `<SA_ID>`)
+
+```bash
+echo "APP=$APP"; echo "PRINCIPAL=$PRINCIPAL"; echo "ACR_ID=$ACR_ID"; echo "SA_ID=$SA_ID"
+```
+
+Danach in Deinem Terminal (die Identität bleibt dieselbe, solange Du die Web-App nicht löschst; eine neu angelegte App bekommt eine neue Objekt-ID, dann müssen die Rollen neu vergeben werden):
+
+```bash
+az webapp config set --resource-group $RG --name $APP --acr-use-identity true --acr-identity '[system]'
+az webapp restart --resource-group $RG --name $APP
+```
+
+**Weg 2 (nur zum Testen, bis die Rollen da sind): Zugangsdaten statt Rollen.** Das geht mit *Mitwirkender*, legt aber **Geheimnisse in den App-Einstellungen** ab, die jeder mit Leserecht auf die App sehen kann, und kann durch eine Richtlinie gesperrt sein. Wechsle auf die Rollen (Weg 1), sobald sie da sind.
+
+```bash
+az acr update --name $ACR --admin-enabled true
+ACR_USER=$(az acr credential show --name $ACR --query username --output tsv)
+ACR_PASS=$(az acr credential show --name $ACR --query "passwords[0].value" --output tsv)
+
+az webapp config set --resource-group $RG --name $APP --acr-use-identity false
+az webapp config container set --resource-group $RG --name $APP \
+  --container-image-name $ACR.azurecr.io/servicecheck:1 \
+  --docker-registry-server-url https://$ACR.azurecr.io \
+  --docker-registry-server-user "$ACR_USER" --docker-registry-server-password "$ACR_PASS"
+
+CONN=$(az storage account show-connection-string --resource-group $RG --name $SA --query connectionString --output tsv)
+az webapp config appsettings set --resource-group $RG --name $APP --settings AZURE_STORAGE_CONNECTION_STRING="$CONN"
+az webapp restart --resource-group $RG --name $APP
+```
+
+Der Verbindungsstring (Schlüssel des Speicherkontos) setzt voraus, dass der Schlüsselzugriff am Speicherkonto nicht gesperrt ist. Nach dem Wechsel auf Weg 1:
+
+```bash
+az acr update --name $ACR --admin-enabled false
+az webapp config appsettings delete --resource-group $RG --name $APP --setting-names AZURE_STORAGE_CONNECTION_STRING
+az webapp config set --resource-group $RG --name $APP --acr-use-identity true --acr-identity '[system]'
+az webapp restart --resource-group $RG --name $APP
+```
+
 ## Schritt 13 – Web-App ans Netz hängen, Einstellungen setzen, testen
 
 Hast Du seit Schritt 10 ein **neues Terminal** geöffnet, stelle zuerst die abgeleiteten Werte (`PG_HOST`, `DATABASE_URL`, Netz-IDs) wieder her: Anhang E.
@@ -741,6 +795,8 @@ Datenbanksicherung (`scripts/backup.sh`, aus dem Netz) oder notierst wenigstens 
 | `az postgres flexible-server create`: SKU nicht verfügbar oder Kontingent | Anderes SKU wählen, siehe Schritt 10 (`list-skus`) |
 | `ResourceNotFound ... pe-blob` (oder `pe-app`) bei `dns-zone-group create` | Der Private Endpoint wurde nicht angelegt. `az network private-endpoint list --resource-group $RG --output table`, den vorherigen Befehl erneut ausführen und die Fehlermeldung lesen (Schritt 11) |
 | `az webapp vnet-integration add` schlägt fehl | Subnetz nicht an `Microsoft.Web/serverFarms` delegiert, oder bereits von einem anderen App-Service-Plan belegt, oder Plan und Netz in verschiedenen Regionen |
+| Protokoll (`*_docker.log`): `ACRTokenRetrievalFailure ... Fetching Acr token failed ... Unauthorized` | Der Managed Identity der Web-App fehlt die Rolle `AcrPull` auf der Registry. Rollenliste prüfen (Schritt 12.2). Meist fehlen Dir die Rechte, Rollen zu vergeben, siehe Weg 1 und Weg 2 dort |
+| `az role assignment create`: `AuthorizationFailed ... roleAssignments/write` | Mit *Mitwirkender* kannst Du keine Rollen vergeben. Die IT muss sie vergeben (Schritt 12.2, Weg 1) |
 | Web-App zeigt „Application Error“ oder 503 | Protokoll lesen (`az webapp log tail`, solange erreichbar). Meist: Image konnte nicht geladen werden (Rolle `AcrPull` noch nicht wirksam, Neustart) oder falsche Einstellungen |
 | Log: `DATABASE_URL ist leer oder ungültig` | Die Einstellung ist leer oder falsch aufgebaut. Variablen prüfen (Schritt 13). Eingestellte Werte ansehen, ohne Geheimnisse: `az webapp config appsettings list --resource-group $RG --name $APP --query "[].{name:name, laenge:length(value)}" --output table`. Länge 0 bedeutet leer |
 | Log: `SECRET_KEY muss gesetzt sein und mindestens 32 Zeichen haben` oder `ADMIN_PASSWORD muss gesetzt sein` | Einstellung fehlt oder ist zu kurz, Schritt 13 wiederholen. Mit PostgreSQL startet die App sonst absichtlich nicht (`ADMIN_PASSWORD` wird nur beim allerersten Start geprüft) |
