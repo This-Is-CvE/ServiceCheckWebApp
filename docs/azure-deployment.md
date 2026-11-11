@@ -578,15 +578,15 @@ curl https://$APP.azurewebsites.net/api/health
 
 Erwartet: `{"status":"ok"}`. Öffne die Adresse im Browser, melde Dich mit **`admin`** und Deinem `ADMIN_PASSWORD` an, lege einen Kunden und ein Onboarding an und klicke **„PDF ablegen“**.
 
-> **Kein Onboarding möglich?** Mit `SEED_DEMO_DATA=0` gibt es noch **keinen Katalog**, und ein Onboarding braucht ein Produkt. Entweder legst Du unter *Kataloge & Vorlagen* einen Managed Service mit einem Produkt an (jedes neue Produkt bekommt eine Standard-Onboarding-Vorlage), oder Du schaltest für den Test den Beispielkatalog ein.
-> Er wird beim Start nur angelegt, solange noch gar kein Managed Service existiert:
->
-> ```bash
-> az webapp config appsettings set --resource-group $RG --name $APP --settings SEED_DEMO_DATA=1
-> az webapp restart --resource-group $RG --name $APP
-> ```
->
-> Danach setzt Du `SEED_DEMO_DATA=0` zurück (gleicher Befehl, Neustart). Bereits angelegte Daten bleiben erhalten. Funktioniert das, laufen Datenbank (privat) und Blob Storage (privat) über das Netz. Danach
+**Kein Onboarding möglich?** Mit `SEED_DEMO_DATA=0` gibt es noch **keinen Katalog**, und ein Onboarding braucht ein Produkt. Entweder legst Du unter *Kataloge & Vorlagen* einen Managed Service mit einem Produkt an (jedes neue Produkt bekommt eine Standard-Onboarding-Vorlage), oder Du schaltest für den Test den Beispielkatalog ein.
+Er wird beim Start nur angelegt, solange noch gar kein Managed Service existiert:
+
+```bash
+az webapp config appsettings set --resource-group $RG --name $APP --settings SEED_DEMO_DATA=1
+az webapp restart --resource-group $RG --name $APP
+```
+
+Danach setzt Du `SEED_DEMO_DATA=0` zurück (gleicher Befehl mit `0`, danach Neustart). Bereits angelegte Daten bleiben erhalten.
 sollte im Portal unter Speicherkonto → Container `documents` ein Blob unter `onboardings/…` liegen. Optional (empfohlen): Im Portal unter Web-App → Überwachung → **Integritätsprüfung** den Pfad `/api/health` eintragen.
 
 Läuft die App nicht: `az webapp log tail --resource-group $RG --name $APP` (solange sie noch öffentlich ist) und die Fehlersuche in Anhang B.
