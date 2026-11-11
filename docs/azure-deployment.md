@@ -1,170 +1,350 @@
-# Service Check in Azure bereitstellen – Schritt für Schritt
+# Service Check in Azure bereitstellen – mit privatem Netzwerk (Mac)
 
-Ziel: Die App läuft mit PostgreSQL als Datenbank, Dokumenten im Blob Storage und Anmeldung über Entra ID.
+Diese Anleitung ist die **einzige** für die Bereitstellung in Azure. Sie geht davon aus, dass **alles privat ist**: Datenbank, Dokumentenspeicher **und die Web-App** haben
+keinen öffentlichen Zugang, sondern nur private Endpoints in einem virtuellen Netz. Alle Befehle laufen im Terminal eines **Macs**.
 
-| Baustein | Azure-Dienst |
-|---|---|
-| Anwendung (Container) | Azure App Service für Linux |
-| Container-Image | Azure Container Registry (das Image wird **in Azure** gebaut, Docker auf Deinem Rechner ist nicht nötig) |
-| Datenbank | Azure Database for PostgreSQL – Flexible Server |
-| Dokumente (PDFs) | Azure Blob Storage |
-| Anmeldung | Microsoft Entra ID |
+```
+Firmennetz ──(VPN/Peering, Eure IT)──► virtuelles Netz  10.163.13.0/24
+                                        ├─ snet-db   10.163.13.0/27    PostgreSQL (private IP)
+                                        ├─ snet-app  10.163.13.32/27   VNet-Integration der Web-App (ausgehend)
+                                        ├─ snet-pe   10.163.13.64/27   Private Endpoints: Web-App (Eingang), Blob Storage
+                                        └─ frei      10.163.13.96 – .255  Reserve (z. B. VPN-Gateway, weitere Dienste)
+Öffentlich bleiben nur: Container Registry (Images ohne Personendaten) und die Azure-Verwaltung (az, Portal).
+```
 
-> **Was geprüft ist und was nicht:** Die Anwendung (Migrationen, Entra-Anmeldung, Blob-Ablage, Backup-Skripte) ist mit
-> automatisierten Tests geprüft, auch gegen ein echtes PostgreSQL 16. Jeden `az`-Befehl dieser Anleitung habe ich gegen die
-> Azure-CLI abgeglichen (Befehle und Parameter existieren). **Ausgeführt gegen ein Azure-Abonnement habe ich sie nicht.**
-> Plant für den ersten Durchlauf Zeit ein. Wenn ein Schritt eine Fehlermeldung liefert, steht am Ende ein Abschnitt zur Fehlersuche.
+| Baustein | Azure-Dienst | Zugang |
+|---|---|---|
+| Anwendung (Container) | App Service für Linux | Eingang nur über **Private Endpoint**, ausgehend über **VNet-Integration** |
+| Container-Image | Container Registry (das Image wird **in Azure** gebaut, Docker auf Deinem Mac ist nicht nötig) | öffentlich (ein privater Zugang braucht die Premium-Stufe) |
+| Datenbank | PostgreSQL Flexible Server | **private IP**, kein öffentlicher Zugang |
+| Dokumente (PDFs) | Blob Storage | nur **Private Endpoint** |
+| Anmeldung | Microsoft Entra ID | Browser des Benutzers zu Microsoft |
+
+> **Was geprüft ist und was nicht:** Die Anwendung (Migrationen, Entra-Anmeldung, Blob-Ablage, Backup-Skripte) ist mit automatisierten Tests geprüft, auch gegen ein echtes PostgreSQL 16.
+> Jeden `az`-Befehl dieser Anleitung habe ich gegen die Azure-CLI abgeglichen (Befehle und Parameter existieren), und die Befehlsblöcke habe ich in bash und zsh auf Syntax geprüft.
+> **Gegen ein Azure-Abonnement oder auf einem echten Mac habe ich sie nicht ausgeführt.** Am anfälligsten sind **Kontingente**, **Rechte auf dem Netz**, **Namensauflösung (DNS)** und die
+> **Anbindung Eures Firmennetzes**. Dafür gibt es Prüfschritte und eine Fehlersuche am Ende.
 >
-> **Kosten:** Alle Ressourcen verursachen laufende Kosten. Prüft die Preise im Azure-Preisrechner. Wenn Ihr nur testen wollt, löscht
-> alles am Ende wieder (Abschnitt „Aufräumen“).
+> **Kosten:** Alle Ressourcen verursachen laufende Kosten (Plan, Datenbank, Private Endpoints, DNS-Zonen, kurzzeitig die Test-VM). Prüft die Preise im Azure-Preisrechner. Wenn Ihr nur testet,
+> löscht alles am Ende wieder (Anhang C).
+
+## Die Schritte im Überblick
+
+| # | Schritt | Wer |
+|---|---|---|
+| 1 | Voraussetzungen und was vorab zu klären ist | Du + IT |
+| 2 | Mac einrichten (Homebrew, Azure-CLI, zsh, Anmeldung) | Du |
+| 3 | Variablen festlegen | Du |
+| 4 | Vorab prüfen (Abonnement, Region, Namen, Dienste) | Du |
+| 5 | Ressourcengruppe | Du |
+| 6 | Netz prüfen und IDs auflösen | Du (Netz: IT) |
+| 7 | Container Registry und Image | Du |
+| 8 | Speicherkonto | Du |
+| 9 | Private DNS-Zonen | Du |
+| 10 | PostgreSQL privat | Du |
+| 11 | Blob Storage privat schalten | Du |
+| 12 | App-Service-Plan, Web-App, Rechte | Du |
+| 13 | Web-App ans Netz hängen, Einstellungen, Test | Du |
+| 14 | Private Endpoint der Web-App | Du |
+| 15 | Privaten Zugang testen | Du |
+| 16 | Öffentlichen Zugang der Web-App abschalten | Du |
+| 17 | Zugang für Eure Benutzer (Netz und DNS) | IT |
+| 18 | Anmeldung mit Entra ID | Du + IT |
+| 19 | Lokale Anmeldung abschalten | Du |
+| 20 | Datensicherung und Wiederherstellung | Du |
+| 21 | Updates einspielen | Du |
+| A–E | Anhang: Ports, Fehlersuche, Aufräumen, nächste Schritte, Werte nach neuem Terminal | |
 
 ---
 
-## Schritt 0 – Was Du brauchst
+## Schritt 1 – Voraussetzungen und was vorab zu klären ist
 
-- Ein **Azure-Abonnement** und dort die Rolle **Besitzer** (oder *Mitwirkender* plus *Benutzerzugriffsadministrator*) auf der
-  Ressourcengruppe. Rollenzuweisungen für die Managed Identity in Schritt 7 brauchen diese Rechte.
-- Für Schritt 9 (Entra-App-Registrierung) Rechte im Entra-Admin-Center, z. B. die Rolle *Anwendungsentwickler* oder
-  *Cloudanwendungsadministrator*. Wenn Du sie nicht hast, schick Deiner IT die Beschreibung aus Schritt 9.
-- Auf Deinem **Mac**: Homebrew, die **Azure-CLI**, `openssl` und `curl` (sind im Mac enthalten) sowie die richtige zsh-Einstellung. **Alle Voraussetzungen, die Installation und die Prüfung stehen in
-  [azure-voraussetzungen-mac.md](azure-voraussetzungen-mac.md).** Lies zuerst diese Seite.
-- Den Quellcode (`git`) brauchst Du nur, wenn Du das Image neu bauen willst (Schritt 4 und 12).
+### Auf dem Mac
 
-## Schritt 1 – Azure-CLI installieren und anmelden
+| Was | Wofür | Prüfen | Installieren |
+|---|---|---|---|
+| **macOS**, aktuelle Version (Intel oder Apple Silicon) | Grundlage | `sw_vers` | Systemeinstellungen, Softwareupdate. Bei sehr altem macOS kann die Installation von Homebrew und Azure-CLI scheitern |
+| **Administratorrechte** auf dem Mac | Installation von Homebrew | `sudo -v` fragt nach Deinem Passwort | bei einem Firmen-Mac über die IT, siehe „Firmen-Mac“ in Schritt 2 |
+| **Homebrew** | Paketverwaltung, installiert die Azure-CLI | `brew --version` | Schritt 2 |
+| **Azure-CLI (`az`)** | alle Azure-Befehle | `az version` | `brew install azure-cli` |
+| **`openssl`** | Zufallswerte für Passwörter und Schlüssel | `openssl rand -hex 4` | **im Mac enthalten** (LibreSSL) |
+| **`curl`**, **`nslookup`** | App-Test, Namensprüfung | `curl --version` | **im Mac enthalten** |
+| **`git`** | Quellcode holen, **nur wenn Du das Image neu bauen musst** (Schritt 7, 21) | `git --version` | beim ersten Aufruf bietet macOS die „Command Line Tools“ an, oder `brew install git` |
+| **Texteditor** (`nano`) und **Webbrowser** | `azure.env` bearbeiten, `az login`, Portal, Entra | – | im Mac enthalten |
 
-Installation auf dem Mac (einmalig, Details in [azure-voraussetzungen-mac.md](azure-voraussetzungen-mac.md)):
+**Nicht nötig:** Docker Desktop, Python, Node.js. Python und Node.js brauchst Du nur, wenn Du die App **lokal** auf dem Mac starten willst (siehe README).
+
+### In Azure und bei der IT (vorab klären)
+
+- **Abonnement und Rollen:**
+  - Auf der Ressourcengruppe der Anwendung (`$RG`): *Mitwirkender* **plus** *Benutzerzugriffsadministrator* (oder *Besitzer*). Letzteres ist für die Rollenzuweisungen der Managed Identity in Schritt 12 nötig.
+  - Auf der Ressourcengruppe des **virtuellen Netzes** (`$RG_NET`): *Netzwerkmitwirkender* (oder mindestens das Recht `Microsoft.Network/virtualNetworks/subnets/join/action`). Ohne dieses Recht scheitern Datenbank,
+    Private Endpoints und VNet-Integration.
+  - Für Schritt 18 (Entra-App-Registrierung): Rechte im Entra-Admin-Center (z. B. *Anwendungsentwickler* oder *Cloudanwendungsadministrator*), oder die IT erledigt es.
+- **Das virtuelle Netz:** Name, **Ressourcengruppe**, Region, die drei Subnetze und ihre **Delegierungen** (`snet-db` an `Microsoft.DBforPostgreSQL/flexibleServers`, `snet-app` an `Microsoft.Web/serverFarms`, `snet-pe` ohne). Der Adressbereich darf
+  sich nicht mit dem Firmennetz überschneiden (Vorschlag in Schritt 6).
+- **Kontingent für App Service:** In neuen oder für andere Zwecke angelegten Abonnements ist das Kontingent für den App-Service-Plan in der Region oft **0** (siehe Schritt 12). Das kann ein Antrag nötig machen.
+- **Richtlinien (Azure Policy):** Frag die IT, ob auf Abonnement oder Ressourcengruppe Richtlinien liegen, die SKUs, Regionen, Tags oder öffentlichen Zugang vorgeben.
+- **Anbindung des Firmennetzes und DNS** (Schritt 17): Wie kommen die Arbeitsplätze zum virtuellen Netz, und wie lösen sie den App-Namen auf? **Das ist die größte Abhängigkeit.** Ohne diese Anbindung kann niemand die App aufrufen,
+  nachdem der öffentliche Zugang abgeschaltet ist.
+- **Region:** Netz, App-Service-Plan, Datenbank, Speicherkonto und Private Endpoints liegen in **derselben Region** (`$LOC`).
+- **Netzwerkzugriff** vom Mac (ausgehend, HTTPS/443): `login.microsoftonline.com`, `management.azure.com`, Eure Registry `*.azurecr.io`, `github.com`. Für die Installation zusätzlich `raw.githubusercontent.com` (Homebrew).
+- **Nur für ein neues Image:** ein GitHub-Zugriffstoken mit Leserecht auf das private Repository (Fine-grained Token, nur dieses Repository, „Contents: read“).
+
+## Schritt 2 – Mac einrichten
+
+**2.1 Homebrew** (einmalig). Das Programm installiert bei Bedarf zuerst die „Command Line Tools“ von Apple und fragt nach Deinem Passwort:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Am Ende zeigt der Installer unter „Next steps“ zwei Zeilen, die Homebrew in den Suchpfad eintragen. **Führe diese Zeilen aus**, sonst findet das Terminal `brew` nicht. Bei Apple Silicon:
+
+```bash
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+Bei einem Intel-Mac liegt Homebrew unter `/usr/local`, dann steht der passende Pfad in der Ausgabe des Installers.
+
+**2.2 Azure-CLI:**
 
 ```bash
 brew update
 brew install azure-cli
 ```
 
-Im Terminal:
+Die Befehle dieser Anleitung sind gegen die Azure-CLI 2.91 abgeglichen, eine neuere Version ist unproblematisch (`brew upgrade azure-cli`). Neuere Versionen zeigen bei jedem Aufruf manchmal eine **`SyntaxWarning: "\/" is an invalid escape sequence`**.
+Das ist ein harmloser Schönheitsfehler im Programmcode der CLI und keine Fehlermeldung. Mit `export PYTHONWARNINGS=ignore` blendest Du sie in diesem Terminalfenster aus.
+
+**2.3 Die zsh richtig einstellen (wichtig).** Das Terminal des Macs benutzt **zsh**. Dort gelten Kommentare mit `#` beim **Einfügen** nicht als Kommentar. Aus `RG='meine-gruppe'   # Name der Gruppe` wird ein anderer Befehl, und **die Variable
+wird nicht gesetzt**, ohne klare Fehlermeldung. Behebe das einmalig und dauerhaft:
+
+```bash
+echo 'setopt interactive_comments' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Für ein bereits offenes Fenster reicht `setopt interactive_comments`. Alternativ startest Du mit `bash` eine Bash-Sitzung (macOS zeigt dazu einen Hinweis zur zsh, den Du ignorieren kannst). Die Prüfschleifen in dieser Anleitung laufen in zsh und bash.
+
+**2.4 Prüfen, ob der Mac bereit ist:**
+
+```bash
+for t in brew az openssl curl nslookup git; do
+  if command -v $t >/dev/null 2>&1; then echo "OK      $t"; else echo "FEHLT   $t"; fi
+done
+echo "Shell: $SHELL"
+openssl rand -hex 4 >/dev/null 2>&1 && echo "OK      openssl rand" || echo "FEHLT   openssl rand"
+az version --query '"azure-cli"' --output tsv 2>/dev/null
+```
+
+Erwartet: `OK` für `brew`, `az`, `openssl`, `curl`, `nslookup` (`git` nur für ein neues Image), `Shell: /bin/zsh` und eine Versionsnummer der Azure-CLI. Fällt `openssl rand` aus, nimm statt `openssl rand -hex 16` diese Alternative:
+`LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom | head -c 32`.
+
+**2.5 Anmelden und Abonnement wählen:**
 
 ```bash
 az login
 az account list --output table
-az account set --subscription "<Name oder ID Deines Abonnements>"
-az account show --query "{Abo:name, Mandant:tenantId}" --output table
+az account set --subscription "Name oder ID Deines Abonnements"
+az account show --query "{Abo:name, id:id, Mandant:tenantId}" --output table
 ```
 
-Notiere Dir die **Mandanten-ID** (`tenantId`), Du brauchst sie in Schritt 9.
+`az login` öffnet den Browser. Geht das nicht (z. B. gesperrter Browser), nimm `az login --use-device-code` und gib den angezeigten Code auf https://microsoft.com/devicelogin ein. Notiere Dir die **Mandanten-ID** (`tenantId`, für Schritt 18).
+Prüfe, dass das **Abonnement** das ist, in dem das Netz liegt. Das Portal und die CLI können unterschiedliche Abonnements zeigen.
 
-## Schritt 2 – Namen und Geheimnisse festlegen
+**Firmen-Mac:**
+- **Homebrew blockiert oder keine Administratorrechte:** Nutze die **Azure Cloud Shell** (Bash im Browser, https://shell.azure.com). Dort sind `az`, `openssl`, `curl` und `git` vorhanden, und Du bist angemeldet. Diese Anleitung läuft dort unverändert. Variablen gehen nach etwa
+  20 Minuten Inaktivität verloren, nutze die Datei `~/azure.env` aus Schritt 3.
+- **Proxy oder TLS-Prüfung** (Zertifikatsfehler bei `az`): Nach Microsofts Dokumentation setzt Du den Pfad zum Firmenzertifikat, z. B. `export REQUESTS_CA_BUNDLE=/pfad/zum/firmenzertifikat.pem`. Schalte die Zertifikatsprüfung **nicht** ab.
+- Von Deinem Mac erreichst Du die private Web-App und die private Datenbank nur über die Netzanbindung der Firma. Die Anleitung testet deshalb mit einer Test-VM und der Azure-Verwaltung (Schritt 15).
 
-Alle folgenden Befehle benutzen diese Variablen. **Setze sie in jedem neuen Terminal erneut**, am besten, indem Du sie in eine
-Datei `~/azure.env` speicherst (Vorlage: [azure.env.example](azure.env.example), Anleitung in [azure-voraussetzungen-mac.md](azure-voraussetzungen-mac.md)) und mit
-`source ~/azure.env` lädst.
+## Schritt 3 – Variablen festlegen
 
-> **Mac (zsh):** Führe einmalig `setopt interactive_comments` aus (Details in der Voraussetzungs-Seite). Sonst gilt `# Kommentar` beim Einfügen in zsh nicht als Kommentar, und eine
-> Zeile wie `RG=x   # Gruppe` setzt die Variable **nicht**.
+Alle Befehle benutzen Variablen. **Pro Terminalfenster gehen sie verloren**, deshalb legst Du sie **einmal** in der Datei `~/azure.env` ab (in Deinem Benutzerordner, **nicht** im Projekt, nicht in Git) und lädst sie in jedem Terminal mit `source ~/azure.env`:
 
 ```bash
-SUFFIX=pco1                             # kurz, nur Kleinbuchstaben/Ziffern, max. 6 Zeichen; macht die Namen weltweit eindeutig
-RG=rg-servicecheck
-LOC=germanywestcentral
-ACR=acrservicecheck$SUFFIX              # nur Kleinbuchstaben/Ziffern
-PG=pg-servicecheck-$SUFFIX
-SA=stservicecheck$SUFFIX                # Speicherkonto: 3–24 Zeichen, nur Kleinbuchstaben/Ziffern
-PLAN=plan-servicecheck
-PLAN_SKU=P0V3                           # Stufe des App-Service-Plans; bei Kontingentfehler S1 oder P1V3 versuchen (Schritt 7a)
-APP=app-servicecheck-$SUFFIX            # die Adresse wird https://$APP.azurewebsites.net
-DBNAME=servicecheck
-PGADMIN=scadmin
-
-PGPASS=$(openssl rand -hex 16)          # nur Hex-Zeichen: keine Sonderzeichen, die in der Datenbank-URL Probleme machen
-SECRET_KEY=$(openssl rand -hex 32)      # signiert die Anmelde-Token der App
-ADMIN_PASSWORD='<Dein starkes Passwort für den ersten Administrator>'
-
-echo "PGPASS=$PGPASS"; echo "SECRET_KEY=$SECRET_KEY"   # JETZT in einen Passwort-Manager kopieren
+nano ~/azure.env       # Vorlage unten einfügen, Werte eintragen; speichern mit Control+O und Enter, beenden mit Control+X
+chmod 600 ~/azure.env  # nur Du darfst die Datei lesen
+source ~/azure.env
 ```
 
-> **Wichtig, wenn Du das Terminal später neu öffnest:** `source azure.env` setzt `PGPASS` und `SECRET_KEY` dann auf **neue Zufallswerte**.
-> `SECRET_KEY` darf sich ändern, `PGPASS` aber **nicht**: Es muss dem Passwort entsprechen, mit dem der Datenbankserver angelegt wurde. Hast Du
-> den alten Wert nicht mehr, setze das Datenbank-Passwort auf den aktuellen Wert zurück (nach Schritt 5):
-> `az postgres flexible-server update --resource-group $RG --name $PG --admin-password "$PGPASS"`
->
-> Schreibe `PGPASS`, `SECRET_KEY` und `ADMIN_PASSWORD` in Euren Passwort-Manager. Danach brauchst Du sie nur noch, wenn Du Dich
-> direkt mit der Datenbank verbinden willst (`PGPASS`). Wenn Du `SECRET_KEY` änderst, werden alle angemeldeten Nutzer abgemeldet.
+**Vorlage** (Ressourcen, die es schon gibt, mit dem echten Namen eintragen; neue Ressourcen: Namen selbst festlegen). Ersetze jedes `HIER-EINTRAGEN`:
 
-## Schritt 3 – Ressourcengruppe anlegen
+```bash
+# --- Anwendung ---
+RG='HIER-EINTRAGEN'                 # Ressourcengruppe der Anwendung (az group list --output table)
+LOC='HIER-EINTRAGEN'                # Region, z. B. germanywestcentral; MUSS die Region des Netzes sein
+SUFFIX='HIER-EINTRAGEN'             # kurz, nur Kleinbuchstaben/Ziffern, z. B. pco2; macht weltweite Namen eindeutig
+ACR="acrservicecheck${SUFFIX}"      # nur Kleinbuchstaben und Ziffern
+PG="pg-servicecheck-${SUFFIX}"      # Datenbankserver
+SA="stservicecheck${SUFFIX}"        # Speicherkonto: 3-24 Zeichen, nur Kleinbuchstaben und Ziffern
+PLAN='plan-servicecheck'
+PLAN_SKU='P0V3'                     # Stufe des App-Service-Plans; bei Kontingentfehler S1 oder B1 versuchen (Schritt 12)
+APP="app-servicecheck-${SUFFIX}"    # Adresse: https://$APP.azurewebsites.net (weltweit eindeutig)
+DBNAME='servicecheck'
+PGADMIN='scadmin'
+
+# --- Netz (liegt oft in einer anderen Ressourcengruppe, von der IT angelegt) ---
+RG_NET='HIER-EINTRAGEN'             # Ressourcengruppe des virtuellen Netzes (az network vnet list --output table)
+VNET='HIER-EINTRAGEN'               # Name des virtuellen Netzes
+SNET_DB='snet-db'
+SNET_APP='snet-app'
+SNET_PE='snet-pe'
+ZONE_PG='servicecheck.private.postgres.database.azure.com'   # muss auf .private.postgres.database.azure.com enden
+ZONE_BLOB='privatelink.blob.core.windows.net'
+ZONE_APP='privatelink.azurewebsites.net'
+VM_SIZE='Standard_B2ts_v2'          # Test-VM (Schritt 15); die alte B-Serie Bv1 (Standard_B1s) ist End of Life
+
+# --- Geheimnisse: EINMAL erzeugen, hier eintragen und im Passwort-Manager ablegen ---
+# Erzeugen mit:  openssl rand -hex 16   (PGPASS)   und   openssl rand -hex 32   (SECRET_KEY)
+PGPASS='HIER-EINTRAGEN'
+SECRET_KEY='HIER-EINTRAGEN'
+ADMIN_PASSWORD='HIER-EINTRAGEN'     # mindestens 10 Zeichen, nicht "admin"
+
+# --- Prüfung beim Laden: nennt jede Variable, die leer ist oder noch den Platzhalter enthält ---
+for v in RG LOC SUFFIX ACR PG SA PLAN PLAN_SKU APP DBNAME PGADMIN RG_NET VNET SNET_DB SNET_APP SNET_PE VM_SIZE PGPASS SECRET_KEY ADMIN_PASSWORD; do
+  eval "val=\${$v}"
+  if [ -z "$val" ] || [ "$val" = "HIER-EINTRAGEN" ]; then echo "FEHLT: $v"; fi
+done
+echo "Prüfung beendet"
+```
+
+Steht beim Laden **kein** `FEHLT:` vor „Prüfung beendet“, bist Du fertig.
+
+- **Die Geheimnisse erzeugst Du nur einmal.** `PGPASS` muss dem Passwort entsprechen, mit dem der Datenbankserver angelegt wird. Würdest Du es bei jedem Terminal neu würfeln, passt es nicht mehr zum Server. Hast Du es doch verloren, setzt Du das Datenbankpasswort nach Schritt 10 zurück:
+  `az postgres flexible-server update --resource-group $RG --name $PG --admin-password "$PGPASS"`. Ein neuer `SECRET_KEY` meldet nur alle angemeldeten Nutzer ab.
+- Schreibe `PGPASS`, `SECRET_KEY` und `ADMIN_PASSWORD` zusätzlich in Euren Passwort-Manager.
+- **Namen:** Web-App, Registry, Speicherkonto und Datenbankserver heißen **weltweit eindeutig**. Wenn es frühere Versuche mit denselben Namen gab (auch in einem anderen Abonnement), sind sie belegt. Wähle dann ein neues `SUFFIX` (Prüfung in Schritt 4).
+
+## Schritt 4 – Vorab prüfen
+
+Fünf Minuten, die viel Ärger sparen. Du prüfst, ob die CLI im richtigen Abonnement und in der richtigen Region arbeitet, ob die Namen frei sind und ob die Azure-Dienste registriert sind.
+
+```bash
+# 1) Richtiges Abonnement? Vergleiche die ID mit dem Portal (Abonnements, Übersicht)
+az account show --query "{name:name, id:id}" --output table
+
+# 2) Gleiche Region überall? Alle Zeilen müssen dieselbe Region zeigen
+echo "LOC=$LOC"
+az network vnet show --resource-group $RG_NET --name $VNET --query location --output tsv
+
+# 3) Sind die weltweit eindeutigen Namen frei? (true = frei)
+az acr check-name --name $ACR --query nameAvailable
+az storage account check-name --name $SA --query nameAvailable
+nslookup $APP.azurewebsites.net
+```
+
+Bei `nslookup` heißt `NXDOMAIN` **frei**. Erscheinen IP-Adressen, ist der Name der Web-App vergeben. Bei `false` oder vergebenem Namen änderst Du `SUFFIX` in `~/azure.env` und lädst neu. Der Datenbankname lässt sich vorab nicht prüfen. Ist er belegt, meldet es Schritt 10.
+
+```bash
+# 4) Dienste registriert? Jeder muss "Registered" zeigen; sonst mit dem Befehl darunter registrieren
+for ns in Microsoft.ContainerRegistry Microsoft.DBforPostgreSQL Microsoft.Network Microsoft.Storage Microsoft.Web; do
+  printf "%-32s" $ns; az provider show --namespace $ns --query registrationState --output tsv
+done
+```
+
+Steht bei einem Dienst `NotRegistered`:
+
+```bash
+az provider register --namespace Microsoft.Web --wait
+```
+
+(ersetze `Microsoft.Web` durch den betroffenen Dienst).
+
+## Schritt 5 – Ressourcengruppe anlegen
+
+Nur, wenn es `$RG` noch nicht gibt (`az group exists --name $RG` zeigt `true` oder `false`):
 
 ```bash
 az group create --name $RG --location $LOC
 ```
 
-Bei einem neuen Abonnement müssen einige Dienste einmalig registriert werden. Falls ein späterer Schritt
-`MissingSubscriptionRegistration` meldet, führe aus:
+## Schritt 6 – Netz prüfen und IDs auflösen
+
+Das virtuelle Netz liegt meist in **einer anderen Ressourcengruppe** (`$RG_NET`) als die Anwendung (`$RG`) und wurde von der IT mit Subnetzen und Delegierungen angelegt. Weil Azure einen bloßen Netznamen nur in der **eigenen** Ressourcengruppe sucht, arbeiten alle folgenden Schritte
+mit den **Ressourcen-IDs** von Netz und Subnetzen. Du löst sie **einmal** auf (und wieder, wenn Du ein neues Terminal öffnest, siehe Anhang E):
 
 ```bash
-az provider register --namespace Microsoft.ContainerRegistry
-az provider register --namespace Microsoft.DBforPostgreSQL
-az provider register --namespace Microsoft.Web
-az provider register --namespace Microsoft.Storage
+VNET_ID=$(az network vnet show --resource-group $RG_NET --name $VNET --query id --output tsv)
+SUBNET_DB_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_DB --query id --output tsv)
+SUBNET_APP_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_APP --query id --output tsv)
+SUBNET_PE_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_PE --query id --output tsv)
+for v in VNET_ID SUBNET_DB_ID SUBNET_APP_ID SUBNET_PE_ID; do eval "val=\${$v}"; [ -z "$val" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
 ```
 
-## Schritt 4 – Container Registry anlegen und das Image bauen
+Kommt `FEHLT:` oder eine Fehlermeldung, stimmen `RG_NET`, `VNET` oder die Subnetz-Namen nicht, oder Dir fehlt das Leserecht auf dem Netz. Dann prüfe das Netz (lesend, es ändert nichts):
+
+```bash
+az network vnet show --resource-group $RG_NET --name $VNET \
+  --query "{name:name, region:location, bereich:addressSpace.addressPrefixes[0]}" --output table
+
+az network vnet subnet list --resource-group $RG_NET --vnet-name $VNET \
+  --query "[].{name:name, bereich:addressPrefix, delegation:delegations[0].serviceName}" --output table
+```
+
+Erwartet: Region wie `$LOC`, `snet-db` mit Delegierung **`Microsoft.DBforPostgreSQL/flexibleServers`**, `snet-app` mit **`Microsoft.Web/serverFarms`**, `snet-pe` **ohne** Delegierung. Fehlt eine Delegierung und hast Du das Recht dazu, hole sie nach:
+
+```bash
+az network vnet subnet update --resource-group $RG_NET --vnet-name $VNET --name $SNET_DB  --delegations Microsoft.DBforPostgreSQL/flexibleServers
+az network vnet subnet update --resource-group $RG_NET --vnet-name $VNET --name $SNET_APP --delegations Microsoft.Web/serverFarms
+```
+
+**Adressbereich (Vorschlag, mit der IT abstimmen):** `10.163.13.0/24` (256 Adressen), aufgeteilt in drei Subnetze mit je `/27` (32 Adressen, davon 27 nutzbar, Azure reserviert je 5):
+
+| Subnetz | Bereich | Nutzbare Adressen |
+|---|---|---|
+| `snet-db` | `10.163.13.0/27` | `.4` bis `.30` |
+| `snet-app` | `10.163.13.32/27` | `.36` bis `.62` |
+| `snet-pe` | `10.163.13.64/27` | `.68` bis `.94` |
+| frei | `10.163.13.96/27` bis `.255` | Reserve, z. B. ein `GatewaySubnet` (`/27`) für ein VPN-Gateway |
+
+Mindestgröße für Datenbank- und App-Subnetz ist `/28`. `/27` lässt Platz zum Wachsen (weitere App-Instanzen, eine Wiederherstellung neben dem laufenden Server). Ist der zugeteilte Bereich kleiner als `/24`: Mit einem `/26` geht es gerade noch mit drei `/28`, ohne Platz für ein VPN-Gateway.
+
+Legst Du das Netz **selbst** an (statt es von der IT zu bekommen):
+
+```bash
+VNET_CIDR=10.163.13.0/24
+az network vnet create --resource-group $RG_NET --name $VNET --location $LOC --address-prefixes $VNET_CIDR
+
+az network vnet subnet create --resource-group $RG_NET --vnet-name $VNET --name $SNET_DB \
+  --address-prefixes 10.163.13.0/27 --delegations Microsoft.DBforPostgreSQL/flexibleServers
+
+az network vnet subnet create --resource-group $RG_NET --vnet-name $VNET --name $SNET_APP \
+  --address-prefixes 10.163.13.32/27 --delegations Microsoft.Web/serverFarms
+
+az network vnet subnet create --resource-group $RG_NET --vnet-name $VNET --name $SNET_PE \
+  --address-prefixes 10.163.13.64/27
+```
+
+Die Delegierung reserviert das Subnetz für den jeweiligen Dienst. Ein delegiertes Subnetz kann nichts anderes aufnehmen.
+
+## Schritt 7 – Container Registry und Image
 
 ```bash
 az acr create --resource-group $RG --name $ACR --sku Basic
 ```
 
-Dann **im Projektordner** (dort liegt die `Dockerfile`) das Image in Azure bauen lassen. Dieser Schritt lädt Basis-Images aus
-Azure heraus, Dein Docker-Hub-Problem spielt hier keine Rolle:
+Prüfe, ob das Image schon da ist (nur relevant, wenn die Registry bereits existierte):
 
 ```bash
-cd ~/ServiceCheckWebApp
+az acr repository show-tags --name $ACR --repository servicecheck --output table
+```
+
+Steht dort **`1`**, ist alles bereit. Sonst baust Du das Image **in Azure** (Docker auf dem Mac ist nicht nötig, und das Docker-Hub-Problem Eures Netzes spielt keine Rolle). Dafür brauchst Du den **Quellcode**. Das Repository ist privat, `git` fragt nach Benutzername und Kennwort,
+als Kennwort gibst Du das **GitHub-Zugriffstoken** ein (nicht Dein GitHub-Passwort). Gib das Token nur auf die Frage von `git` ein, nicht in eine Datei oder Befehlszeile:
+
+```bash
+git clone --branch claude/msp-service-check-onboarding-96hqx2 https://github.com/This-Is-CvE/ServiceCheckWebApp.git
+cd ServiceCheckWebApp
 az acr build --registry $ACR --image servicecheck:1 --file Dockerfile .
 ```
 
-Der Build dauert einige Minuten. Am Ende steht `Run ID: ... was successful`.
+Der Build dauert einige Minuten und endet mit `Run ID: ... was successful`. Auf manchen Test-Abonnements sind *ACR Tasks* gesperrt. Dann bricht der Befehl mit einem Fehler ab. Alternativ baust Du lokal mit Docker (`docker build -t $ACR.azurecr.io/servicecheck:1 .`),
+meldest Dich mit `az acr login --name $ACR` an und lädst mit `docker push` hoch. Das braucht funktionierendes Docker.
 
-> Auf manchen Test- und kostenlosen Abonnements sind *ACR Tasks* gesperrt. Dann meldet der Befehl einen Fehler. Alternativ
-> baust Du lokal mit Docker (`docker build -t $ACR.azurecr.io/servicecheck:1 .`), meldest Dich mit `az acr login --name $ACR` an
-> und lädst mit `docker push $ACR.azurecr.io/servicecheck:1` hoch. Das braucht funktionierendes Docker.
-
-Prüfen:
-
-```bash
-az acr repository list --name $ACR --output table
-```
-
-## Schritt 5 – PostgreSQL anlegen
-
-```bash
-az postgres flexible-server create \
-  --resource-group $RG --name $PG --location $LOC \
-  --version 16 --tier Burstable --sku-name Standard_B1ms --storage-size 32 \
-  --backup-retention 35 --geo-redundant-backup Disabled \
-  --admin-user $PGADMIN --admin-password $PGPASS \
-  --public-access 0.0.0.0 --yes
-
-az postgres flexible-server db create --resource-group $RG --server-name $PG --name $DBNAME
-```
-
-Das dauert einige Minuten. Was die Einstellungen bedeuten:
-
-- `--backup-retention 35`: Azure sichert automatisch täglich und ermöglicht die Wiederherstellung auf einen beliebigen Zeitpunkt der
-  letzten 35 Tage. `--geo-redundant-backup Enabled` legt zusätzlich eine Kopie in einer anderen Region ab, lässt sich aber nur
-  **beim Anlegen** festlegen. Entscheide das jetzt.
-- `--public-access 0.0.0.0` legt die Firewall-Regel „Azure-Dienste zulassen“ an. Der Server hat einen **öffentlichen Endpunkt**
-  (`<name>.postgres.database.azure.com`) und bekommt **keine IP aus einem virtuellen Netz**. Die Regel erlaubt Verbindungen von
-  **jeder** Azure-Ressource, auch von Ressourcen anderer Azure-Kunden. Geschützt bist Du dann durch Benutzername, Passwort und die
-  erzwungene SSL-Verschlüsselung, nicht durch das Netzwerk. Für den ersten Start ist das ein üblicher Kompromiss. Strenger geht es mit
-  **Schritt 8b** (nur die Adressen Deiner Web-App) oder mit privatem Zugang (siehe unten und [azure-deployment-private.md](azure-deployment-private.md)). SSL ist bei Flexible Server standardmäßig Pflicht.
-- Gibt es für `Standard_B1ms` in Eurer Region keine Kapazität (oder ist die Burstable-Serie dort als veraltet gekennzeichnet), wählt ein anderes SKU: `az postgres flexible-server list-skus --location $LOC --output table` zeigt, was verfügbar ist. Oder wählt eine andere Region. `az postgres
-  flexible-server list-skus --location $LOC` zeigt die möglichen Größen.
-- **Privater Zugang:** Wollt Ihr den Server ohne öffentlichen Endpunkt betreiben (private IP in einem virtuellen Netz, Web-App und Dokumentenspeicher
-  ebenfalls nur privat erreichbar), folgt Ihr stattdessen der Anleitung **[azure-deployment-private.md](azure-deployment-private.md)**. Sie ersetzt die Schritte 5,
-  7c bis 8b. Der Netzwerkmodus wird beim Anlegen des Servers gewählt und lässt sich nach meinem Kenntnisstand nachträglich nicht umstellen. Entscheidet das also vor Schritt 5.
-
-Die Datenbank-URL, die die App später braucht, setzt sich so zusammen:
-
-```bash
-DATABASE_URL="postgresql+psycopg://$PGADMIN:$PGPASS@$PG.postgres.database.azure.com:5432/$DBNAME?sslmode=require"
-```
-
-## Schritt 6 – Speicherkonto für Dokumente
+## Schritt 8 – Speicherkonto für Dokumente
 
 ```bash
 az storage account create \
@@ -180,16 +360,86 @@ az storage account blob-service-properties update \
   --enable-container-delete-retention true --container-delete-retention-days 30
 ```
 
-- `Standard_LRS` hält drei Kopien in einem Rechenzentrum. Für mehr Ausfallsicherheit nehmt `Standard_ZRS` (Zonen) oder
-  `Standard_GRS` (zweite Region), sofern die Region das anbietet.
-- **Versionierung und „Soft Delete“** schützen vor versehentlichem Löschen oder Überschreiben. Gelöschte Dokumente lassen sich
-  30 Tage lang zurückholen.
-- Der Befehl `az storage container create` kann mit „Berechtigung fehlt“ scheitern, wenn Dein Konto keine Datenrolle hat.
-  Dann gib Dir selbst die Rolle *Storage Blob Data Contributor* auf dem Speicherkonto (Portal: Speicherkonto → Zugriffssteuerung (IAM)).
+- `Standard_LRS` hält drei Kopien in einem Rechenzentrum. Für mehr Ausfallsicherheit nimm `Standard_ZRS` (Zonen) oder `Standard_GRS` (zweite Region), sofern die Region das anbietet.
+- **Versionierung und „Soft Delete“** schützen vor versehentlichem Löschen oder Überschreiben. Gelöschte Dokumente lassen sich 30 Tage lang zurückholen.
+- `az storage container create` kann mit „Berechtigung fehlt“ scheitern, wenn Dein Konto keine Datenrolle hat. Dann gib Dir selbst die Rolle *Storage Blob Data Contributor* auf dem Speicherkonto.
+- **Den Container legst Du jetzt an**, solange das Speicherkonto noch öffentlich erreichbar ist. In Schritt 11 wird der öffentliche Zugang abgeschaltet.
 
-## Schritt 7 – Web-App anlegen und konfigurieren
+## Schritt 9 – Private DNS-Zonen
 
-**7a – Plan und Web-App mit Managed Identity:**
+Innerhalb des Netzes lösen private Zonen die Namen auf die privaten Adressen auf. Alle drei Zonen werden mit dem virtuellen Netz verknüpft:
+
+```bash
+for ZONE in $ZONE_PG $ZONE_BLOB $ZONE_APP; do
+  az network private-dns zone create --resource-group $RG --name $ZONE
+  az network private-dns link vnet create --resource-group $RG --zone-name $ZONE \
+    --name "link-$VNET" --virtual-network $VNET_ID --registration-enabled false
+done
+```
+
+Das Verknüpfen braucht das Recht, das Netz zu verwenden (siehe Schritt 1, Rolle *Netzwerkmitwirkender*).
+
+## Schritt 10 – PostgreSQL mit privatem Zugang
+
+```bash
+ZONE_PG_ID=$(az network private-dns zone show --resource-group $RG --name $ZONE_PG --query id --output tsv)
+
+az postgres flexible-server create \
+  --resource-group $RG --name $PG --location $LOC \
+  --version 16 --tier Burstable --sku-name Standard_B1ms --storage-size 32 \
+  --backup-retention 35 --geo-redundant-backup Disabled \
+  --admin-user $PGADMIN --admin-password $PGPASS \
+  --subnet $SUBNET_DB_ID --private-dns-zone $ZONE_PG_ID --yes
+
+az postgres flexible-server db create --resource-group $RG --server-name $PG --name $DBNAME
+```
+
+Das dauert einige Minuten. Die Befehle laufen über die Verwaltungsschnittstelle und funktionieren auch ohne Zugang zum Netz.
+
+- `--backup-retention 35`: Azure sichert täglich automatisch und ermöglicht die Wiederherstellung auf einen beliebigen Zeitpunkt der letzten 35 Tage. `--geo-redundant-backup Enabled` legt zusätzlich eine Kopie in einer anderen Region an, lässt sich aber nur **beim Anlegen** festlegen. Entscheide das jetzt.
+- Der Netzwerkmodus (privat) wird beim Anlegen gewählt und lässt sich nach meinem Kenntnisstand nachträglich nicht umstellen. Prüfe das in der aktuellen Microsoft-Dokumentation.
+- Ist `Standard_B1ms` in Eurer Region nicht verfügbar (Kapazität oder Kontingent, oder die Burstable-Serie ist dort als veraltet gekennzeichnet), wähle ein anderes SKU: `az postgres flexible-server list-skus --location $LOC --output table` zeigt, was verfügbar ist.
+- Ist der Servername vergeben, hänge etwas an `SUFFIX` an.
+
+Den **tatsächlichen Servernamen** liest Du aus (nicht raten) und baust die Datenbank-URL für die App:
+
+```bash
+PG_HOST=$(az postgres flexible-server show --resource-group $RG --name $PG --query fullyQualifiedDomainName --output tsv)
+echo "$PG_HOST"
+DATABASE_URL="postgresql+psycopg://$PGADMIN:$PGPASS@$PG_HOST:5432/$DBNAME?sslmode=require"
+```
+
+`$PG_HOST` muss auf `…postgres.database.azure.com` enden und in der privaten Zone liegen. SSL ist bei Flexible Server standardmäßig Pflicht.
+
+## Schritt 11 – Blob Storage nur über Private Endpoint
+
+```bash
+SA_ID=$(az storage account show --resource-group $RG --name $SA --query id --output tsv)
+
+az network private-endpoint create --resource-group $RG --name pe-blob --subnet $SUBNET_PE_ID \
+  --private-connection-resource-id $SA_ID --group-id blob --connection-name pe-blob-conn
+
+az network private-endpoint dns-zone-group create --resource-group $RG --endpoint-name pe-blob \
+  --name default --private-dns-zone $ZONE_BLOB --zone-name blob
+```
+
+Prüfe, ob der Private Endpoint wirklich angelegt wurde. Fehlt er, schlägt der zweite Befehl mit `ResourceNotFound ... pe-blob` fehl:
+
+```bash
+az network private-endpoint list --resource-group $RG --output table
+```
+
+Ist `pe-blob` nicht in der Liste, hat der erste Befehl einen Fehler gemeldet (häufig `LinkedAuthorizationFailed`: Dir fehlt auf dem Subnetz in `$RG_NET` das Recht *Netzwerkmitwirkender*). Beseitige die Ursache und wiederhole beide Befehle.
+
+Erst **wenn der Private Endpoint steht**, schaltest Du den öffentlichen Zugang ab. Danach kommt Dein Mac nicht mehr an das Speicherkonto:
+
+```bash
+az storage account update --resource-group $RG --name $SA --public-network-access Disabled
+```
+
+## Schritt 12 – App-Service-Plan, Web-App und Rechte
+
+**12.1 Plan und Web-App (mit Managed Identity):**
 
 ```bash
 az appservice plan create --resource-group $RG --name $PLAN --is-linux --sku $PLAN_SKU --location $LOC
@@ -202,11 +452,20 @@ az webapp update --resource-group $RG --name $APP --https-only true
 az webapp config set --resource-group $RG --name $APP --always-on true --min-tls-version 1.2 --ftps-state Disabled
 ```
 
-> **Kontingent:** Neue oder Test-Abonnements haben für manche Stufen in manchen Regionen ein Kontingent von **0** (Meldung `Current Limit (B1 VMs): 0`). Probiere dann `PLAN_SKU=S1` oder `P1V3`,
-> oder lass das Kontingent erhöhen. Die Region muss bei der privaten Variante die des virtuellen Netzes bleiben. Die Kontingente für **virtuelle Maschinen** (Seite *Nutzung + Kontingente*, Anbieter *Compute*)
-> sind davon getrennt: Dort ist die Familie `Standard BS` (Bv1) als *End of Life* gekennzeichnet. Das betrifft nur VMs, nicht den App-Service-Plan.
+> **Kontingent (häufigste Stolperstelle):** Meldet `az appservice plan create` `Operation cannot be completed without additional quota` (`Current Limit (B1 VMs): 0`), ist das Kontingent für diese Stufe in Eurem Abonnement und dieser Region **0**. Es ist **kein Rechteproblem** (die Meldung trägt den irreführenden Code
+> `Unauthorized`) und meist auch keine Richtlinie.
+> - Probiere eine andere Stufe: `PLAN_SKU=S1`, dann `B1` oder `P1V3`. Das Kontingent gilt je Stufe getrennt.
+> - Stelle den Antrag im Portal: *Kontingente* (oder *Abonnements → Nutzung + Kontingente*), Anbieter **App Service (Public Preview)**, Region wie `$LOC`, Zeile der gewünschten Stufe, Stift-Symbol *Request adjustment*, neues Limit z. B. **2**. Beachte, dass nach Microsofts Beschreibung **zwei** Limits reichen müssen, das der Stufe **und** das Sammelkontingent
+>   *Total Regional VMs* der Region. Das Sammelkontingent steigt beim Anfordern einer Stufe automatisch mit. Schlägt die Selbstbedienung fehl, eröffne eine Supportanfrage (Problemtyp *Service- und Abonnementlimits (Kontingente)*, Typ *App Service*).
+> - Auch das Anlegen im Portal zeigt dieselbe Meldung, solange das Kontingent fehlt. Die Anzeige von „0 von 30“ in der Kontingentseite ist nicht das, was beim Anlegen geprüft wird.
+> - Die Kontingente der **virtuellen Maschinen** (Anbieter *Compute*) sind davon getrennt. Dort ist die Familie `Standard BS` (Bv1) als *End of Life* gekennzeichnet. Das betrifft VMs, nicht den App-Service-Plan.
+> - Die Region **muss** die des Netzes bleiben. Eine andere Region geht nicht.
+> - Hinweis: In der Ausgabe kann ein Feld `freeOfferExpirationTime` erscheinen. Das deutet auf einen befristeten Gratis-Zeitraum hin. Prüfe die Kosten in der Kostenverwaltung, bevor er endet.
 
-**7b – Rechte für die Managed Identity** (die App braucht keine Passwörter für Registry und Dokumentenspeicher):
+> **Name der Web-App bereits vergeben:** Meldet `az webapp create` `Webapp '...' already exists ... Unable to retrieve details of the existing app`, ist der Name **weltweit** vergeben (oft durch einen früheren Versuch in einem anderen Abonnement). Es wurde **nichts** angelegt.
+> Wähle ein anderes `SUFFIX` (Schritt 4, `nslookup`).
+
+**12.2 Rechte der Managed Identity** (die App braucht keine Passwörter für Registry und Dokumentenspeicher):
 
 ```bash
 PRINCIPAL=$(az webapp identity show --resource-group $RG --name $APP --query principalId --output tsv)
@@ -219,19 +478,25 @@ az role assignment create --assignee-object-id $PRINCIPAL --assignee-principal-t
 az webapp config set --resource-group $RG --name $APP --acr-use-identity true --acr-identity '[system]'
 ```
 
-Rollenzuweisungen brauchen bis zu ein paar Minuten, bis sie wirken.
+Rollenzuweisungen brauchen bis zu ein paar Minuten, bis sie wirken. Bis dahin kann die App ihr Image nicht laden (`ImagePullUnauthorizedFailure` im Protokoll). Das erledigt sich mit dem Neustart in Schritt 13.
 
-**7c – Einstellungen der App:**
+## Schritt 13 – Web-App ans Netz hängen, Einstellungen setzen, testen
 
-Prüfe vorher, dass **alle** Variablen gefüllt sind. Eine leere Variable wird sonst als leere App-Einstellung gespeichert, und die App startet
-nicht (Meldung `DATABASE_URL ist leer oder ungültig`):
+Hast Du seit Schritt 10 ein **neues Terminal** geöffnet, stelle zuerst die abgeleiteten Werte (`PG_HOST`, `DATABASE_URL`, Netz-IDs) wieder her: Anhang E.
+
+Die **VNet-Integration** schickt die ausgehenden Verbindungen der App (Datenbank, Blob) durch das Netz:
 
 ```bash
-DATABASE_URL="postgresql+psycopg://$PGADMIN:$PGPASS@$PG.postgres.database.azure.com:5432/$DBNAME?sslmode=require"
-for v in DATABASE_URL SECRET_KEY ADMIN_PASSWORD PGPASS SA APP RG; do eval "val=\${$v}"; [ -z "$val" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
+az webapp vnet-integration add --resource-group $RG --name $APP --vnet $VNET_ID --subnet $SUBNET_APP_ID
 ```
 
-Steht nach „Prüfung beendet“ **kein** `FEHLT:` davor, kannst Du weitermachen.
+Prüfe vor den Einstellungen, dass **alle** Variablen gefüllt sind. Eine leere Variable würde als leere App-Einstellung gespeichert, und die App startet nicht (`DATABASE_URL ist leer oder ungültig`):
+
+```bash
+for v in DATABASE_URL SECRET_KEY ADMIN_PASSWORD PGPASS SA APP RG PG_HOST VNET_ID SUBNET_APP_ID; do eval "val=\${$v}"; [ -z "$val" ] && echo "FEHLT: $v"; done; echo "Prüfung beendet"
+```
+
+Steht vor „Prüfung beendet“ **kein** `FEHLT:`, setzt Du die Einstellungen und startest neu:
 
 ```bash
 az webapp config appsettings set --resource-group $RG --name $APP --settings \
@@ -244,71 +509,96 @@ az webapp config appsettings set --resource-group $RG --name $APP --settings \
   AZURE_STORAGE_ACCOUNT_URL="https://$SA.blob.core.windows.net" \
   AZURE_STORAGE_CONTAINER=documents \
   SEED_DEMO_DATA=0
-```
 
-(`SEED_DEMO_DATA=1` legt zum Testen einen Beispielkatalog an, sofern noch gar kein Managed Service existiert.)
-
-**7d – Protokolle einschalten und App neu starten:**
-
-```bash
 az webapp log config --resource-group $RG --name $APP --docker-container-logging filesystem
 az webapp restart --resource-group $RG --name $APP
 ```
 
-## Schritt 8 – Prüfen, ob die App läuft
+(`SEED_DEMO_DATA=1` legt zum Testen einen Beispielkatalog an, sofern noch gar kein Managed Service existiert.) Verbindungen zu privaten Adressen (hier `10.163.13.x`) laufen automatisch durch das Netz.
 
-Der erste Start dauert 2 bis 5 Minuten (Image laden, Datenbank-Migration). Dann:
+Die Web-App ist an dieser Stelle **noch öffentlich erreichbar**, damit Du Datenbank und Dokumente zuerst testen kannst. Der erste Start dauert 2 bis 5 Minuten (Image laden, Datenbank-Migration):
 
 ```bash
-echo "https://$APP.azurewebsites.net"
 curl https://$APP.azurewebsites.net/api/health
 ```
 
-Erwartet: `{"status":"ok"}`. Öffne die Adresse im Browser und melde Dich mit **`admin`** und Deinem `ADMIN_PASSWORD` an.
+Erwartet: `{"status":"ok"}`. Öffne die Adresse im Browser, melde Dich mit **`admin`** und Deinem `ADMIN_PASSWORD` an, lege einen Kunden und ein Onboarding an und klicke **„PDF ablegen“**. Funktioniert das, laufen Datenbank (privat) und Blob Storage (privat) über das Netz. Danach
+sollte im Portal unter Speicherkonto → Container `documents` ein Blob unter `onboardings/…` liegen. Optional (empfohlen): Im Portal unter Web-App → Überwachung → **Integritätsprüfung** den Pfad `/api/health` eintragen.
 
-Läuft sie nicht, siehe Protokoll:
+Läuft die App nicht: `az webapp log tail --resource-group $RG --name $APP` (solange sie noch öffentlich ist) und die Fehlersuche in Anhang B.
 
-```bash
-az webapp log tail --resource-group $RG --name $APP
-```
-
-Typische Meldungen und ihre Ursache stehen im Abschnitt „Fehlersuche“.
-
-**Dokument-Ablage testen:** Lege einen Kunden und ein Onboarding an, klicke auf „PDF ablegen“ und lade das Dokument wieder herunter.
-Danach sollte im Portal unter Speicherkonto → Container `documents` ein Blob unter `onboardings/…` liegen.
-
-Optional (empfohlen): Im Portal unter Web-App → Überwachung → **Integritätsprüfung** den Pfad `/api/health` eintragen,
-damit Azure eine hängende Instanz erkennt.
-
-## Schritt 8b – Datenbankzugriff auf die Web-App beschränken (empfohlen)
-
-Statt „alle Azure-Ressourcen“ erlaubst Du nur die ausgehenden Adressen Deiner Web-App. Erst die neuen Regeln anlegen, dann die
-allgemeine Regel löschen:
+## Schritt 14 – Eingang der Web-App über Private Endpoint
 
 ```bash
-# 1) Für jede mögliche ausgehende Adresse der Web-App eine Regel anlegen
-for ip in $(az webapp show --resource-group $RG --name $APP --query possibleOutboundIpAddresses --output tsv | tr ',' ' '); do
-  az postgres flexible-server firewall-rule create --resource-group $RG --server-name $PG \
-    --name "app-${ip//./-}" --start-ip-address $ip --end-ip-address $ip
-done
+APP_ID=$(az webapp show --resource-group $RG --name $APP --query id --output tsv)
 
-# 2) Die allgemeine Azure-Regel (0.0.0.0) suchen und löschen
-RULE=$(az postgres flexible-server firewall-rule list --resource-group $RG --server-name $PG \
-  --query "[?startIpAddress=='0.0.0.0'].name" --output tsv)
-az postgres flexible-server firewall-rule delete --resource-group $RG --server-name $PG --name "$RULE" --yes
+az network private-endpoint create --resource-group $RG --name pe-app --subnet $SUBNET_PE_ID \
+  --private-connection-resource-id $APP_ID --group-id sites --connection-name pe-app-conn
 
-# 3) Prüfen, dass die App weiter läuft
-curl https://$APP.azurewebsites.net/api/health
+az network private-endpoint dns-zone-group create --resource-group $RG --endpoint-name pe-app \
+  --name default --private-dns-zone $ZONE_APP --zone-name sites
 ```
 
-Die ausgehenden Adressen können sich ändern, wenn Du den App-Service-Plan skalierst oder auf eine andere Preisstufe wechselst. Wiederhole dann
-Punkt 1. Die Liste `possibleOutboundIpAddresses` enthält alle Adressen, die die App nutzen kann. Meldet die App danach Datenbank-Fehler,
-legst Du die allgemeine Regel mit `--start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0` wieder an.
+Der Private Endpoint gilt auch für die Verwaltungsadresse der App (`$APP.scm.azurewebsites.net`, Logs und Terminal). Prüfe wie in Schritt 11 mit `az network private-endpoint list --resource-group $RG --output table`, dass `pe-app` existiert.
 
-## Schritt 9 – Anmeldung mit Entra ID einrichten
+## Schritt 15 – Privaten Zugang testen, bevor der öffentliche abgeschaltet wird
 
-Diese Schritte erfolgen im **Entra-Admin-Center** (https://entra.microsoft.com), nicht in der Konsole. Wenn Du keine Rechte hast, gib
-sie Deiner IT mit.
+Du brauchst einen Rechner **im** virtuellen Netz. Am einfachsten ist eine kleine, kurzlebige Linux-VM ohne öffentliche Adresse in einer eigenen Ressourcengruppe, die Du über die Azure-Verwaltung steuerst (ohne SSH).
+
+**VM-Größe:** Die frühere B-Serie (`Standard_B1s`, Familie *Standard BS*, Bv1) ist im Portal als **End of Life** gekennzeichnet. Welche neueren Größen in Eurer Region verfügbar sind, zeigt:
+
+```bash
+az vm list-sizes --location $LOC --query "[?starts_with(name,'Standard_B') && contains(name,'_v2')].name" --output tsv
+```
+
+Nimm eine **ohne `p` im Namen** (mit `p` sind es Arm-Prozessoren, auf denen das Ubuntu-Abbild unten nicht läuft), z. B. `Standard_B2ts_v2` oder `Standard_B2ats_v2`, und setze `VM_SIZE` in `~/azure.env` entsprechend.
+
+```bash
+RG_TEST=rg-servicecheck-test
+az group create --name $RG_TEST --location $LOC
+
+az vm create --resource-group $RG_TEST --name vm-nettest \
+  --image Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest --size $VM_SIZE \
+  --subnet $SUBNET_PE_ID --public-ip-address "" --nsg-rule NONE \
+  --admin-username azureuser --generate-ssh-keys
+
+az vm run-command invoke --resource-group $RG_TEST --name vm-nettest --command-id RunShellScript \
+  --scripts "getent hosts $APP.azurewebsites.net; curl -s https://$APP.azurewebsites.net/api/health"
+```
+
+Erwartet: Der Name löst auf eine Adresse im Bereich **10.163.13.68 bis .94** (Subnetz `snet-pe`) auf, und die Antwort ist `{"status":"ok"}`. Steht dort eine öffentliche Adresse, ist die DNS-Zone nicht (richtig) mit dem Netz verknüpft (Schritt 9 und 14 prüfen).
+Ist die gewünschte Größe in Eurer Region nicht verfügbar, wähle eine andere.
+
+## Schritt 16 – Öffentlichen Zugang der Web-App abschalten
+
+**Nur wenn Schritt 15 ein richtiges Ergebnis geliefert hat.** Ab jetzt kommt von außen niemand mehr an die App, auch Du nicht:
+
+```bash
+az webapp update --resource-group $RG --name $APP --set publicNetworkAccess=Disabled
+```
+
+Prüfen: Aus dem Internet (Dein Mac ohne Netzanbindung) liefert `curl https://$APP.azurewebsites.net/api/health` jetzt eine Fehlermeldung (HTTP 403), aus der Test-VM weiterhin `{"status":"ok"}`:
+
+```bash
+az vm run-command invoke --resource-group $RG_TEST --name vm-nettest --command-id RunShellScript \
+  --scripts "curl -s https://$APP.azurewebsites.net/api/health"
+```
+
+Kommst Du nach diesem Schritt nicht mehr an die App, ist das Absicht. Mit `--set publicNetworkAccess=Enabled` machst Du den Schritt rückgängig. Die Test-VM löschst Du, wenn Du sie nicht mehr brauchst (Anhang C).
+
+## Schritt 17 – Zugang für Eure Benutzer (mit der IT)
+
+Das Azure-Ende ist fertig. Damit Eure Mitarbeiter die App öffnen können, muss die IT zwei Dinge einrichten. Die Befehle hängen von Eurer Umgebung ab:
+
+1. **Netzwerkverbindung** zwischen Firmennetz und dem virtuellen Netz `10.163.13.0/24`: Site-to-Site-VPN, ExpressRoute, Peering zu einem vorhandenen Hub-Netz oder ein VPN pro Benutzer (Point-to-Site) in dieses Netz.
+2. **Namensauflösung:** Der Name `$APP.azurewebsites.net` muss bei den Arbeitsplätzen auf die **private** Adresse zeigen. Üblich ist eine bedingte Weiterleitung (Conditional Forwarder) im Firmen-DNS für `azurewebsites.net` an einen DNS-Resolver im virtuellen Netz (z. B. Azure DNS Private Resolver), der die private Zone aus Schritt 9 kennt.
+   Eine Alternative ist ein interner Eintrag mit eigenem Namen (z. B. `servicecheck.firma.de`) auf die private IP. Dafür braucht die App ein Zertifikat für diesen Namen. Die von Azure verwalteten kostenlosen Zertifikate sind für nicht öffentlich erreichbare Apps in der Regel nicht nutzbar. Prüft das mit der IT.
+
+Die Anmeldung über Entra ID bleibt davon unberührt: Die Umleitung läuft im Browser des Benutzers, er muss dazu nur die App-Adresse und `login.microsoftonline.com` erreichen können. Die App selbst muss ausgehend `login.microsoftonline.com` erreichen. Das ist ohne eigene Netzwerksperren automatisch so.
+
+## Schritt 18 – Anmeldung mit Entra ID einrichten
+
+Diese Schritte erfolgen im **Entra-Admin-Center** (https://entra.microsoft.com), nicht im Terminal. Wenn Du keine Rechte hast, gib sie Deiner IT mit.
 
 1. **Identität → Anwendungen → App-Registrierungen → Neue Registrierung.**
    - Name: `Service Check`
@@ -316,9 +606,7 @@ sie Deiner IT mit.
    - Umleitungs-URI: Plattform **Web**, Wert `https://<APP>.azurewebsites.net/api/auth/oidc/callback` (mit Deinem App-Namen)
    - **Registrieren**
 2. Auf der Übersichtsseite notierst Du **Anwendungs-ID (Client)** und **Verzeichnis-ID (Mandant)**.
-3. **Zertifikate & Geheimnisse → Neuer geheimer Clientschlüssel.** Ablauf 12 oder 24 Monate wählen. Den **Wert** sofort kopieren,
-   er wird nur einmal angezeigt. Trage das Ablaufdatum in einen Kalender ein. Danach ist die Anmeldung kaputt, bis ein neuer
-   Schlüssel in der App hinterlegt ist.
+3. **Zertifikate & Geheimnisse → Neuer geheimer Clientschlüssel.** Ablauf 12 oder 24 Monate. Den **Wert** sofort kopieren, er wird nur einmal angezeigt. Trage das Ablaufdatum in einen Kalender ein. Danach ist die Anmeldung kaputt, bis ein neuer Schlüssel in der App hinterlegt ist.
 4. **App-Rollen → App-Rolle erstellen** (zweimal):
 
    | Anzeigename | Zulässige Mitgliedstypen | Wert | Beschreibung |
@@ -326,17 +614,14 @@ sie Deiner IT mit.
    | Service Check Administrator | Benutzer/Gruppen | `ServiceCheck.Admin` | Pflegt Kataloge, Vorlagen und Benutzer |
    | Service Check Consultant | Benutzer/Gruppen | `ServiceCheck.Consultant` | Führt Service Checks und Onboardings durch |
 
-5. **Unternehmensanwendungen → Service Check → Eigenschaften:** **„Zuweisung erforderlich?“ = Ja**, speichern. Dann kann sich nur
-   anmelden, wer zugewiesen ist.
-6. **Unternehmensanwendungen → Service Check → Benutzer und Gruppen → Benutzer/Gruppe hinzufügen:** Benutzer oder Gruppen auswählen
-   und jeweils eine Rolle zuweisen. (Gruppen lassen sich nur mit einer Entra-ID-P1/P2-Lizenz zuweisen, sonst einzelne Benutzer.)
-   Weise **Dir selbst** zuerst `Service Check Administrator` zu.
-7. Zurück im Terminal die Werte in der App hinterlegen:
+5. **Unternehmensanwendungen → Service Check → Eigenschaften:** **„Zuweisung erforderlich?“ = Ja**, speichern. Dann kann sich nur anmelden, wer zugewiesen ist.
+6. **Unternehmensanwendungen → Service Check → Benutzer und Gruppen → Benutzer/Gruppe hinzufügen:** Benutzer oder Gruppen auswählen und jeweils eine Rolle zuweisen. (Gruppen lassen sich nur mit einer Entra-ID-P1/P2-Lizenz zuweisen, sonst einzelne Benutzer.) Weise **Dir selbst** zuerst `Service Check Administrator` zu.
+7. Zurück im Terminal die Werte in der App hinterlegen. Setze die Variablen **im Terminal**, nicht in `azure.env` (der Clientschlüssel ist ein Geheimnis):
 
 ```bash
-TENANT_ID="<Verzeichnis-ID aus Schritt 2>"
-CLIENT_ID="<Anwendungs-ID aus Schritt 2>"
-CLIENT_SECRET="<Wert des Clientschlüssels aus Schritt 3>"
+TENANT_ID="<Verzeichnis-ID aus Punkt 2>"
+CLIENT_ID="<Anwendungs-ID aus Punkt 2>"
+CLIENT_SECRET="<Wert des Clientschlüssels aus Punkt 3>"
 
 az webapp config appsettings set --resource-group $RG --name $APP --settings \
   OIDC_TENANT_ID="$TENANT_ID" \
@@ -347,10 +632,9 @@ az webapp config appsettings set --resource-group $RG --name $APP --settings \
 az webapp restart --resource-group $RG --name $APP
 ```
 
-Danach steht auf der Anmeldeseite **„Mit Microsoft anmelden“**. Melde Dich damit an. Unter „Benutzer“ erscheint Dein Konto mit dem Hinweis
-**SSO**. Rolle und Name kommen ab sofort aus Entra und werden bei jeder Anmeldung aktualisiert.
+Danach steht auf der Anmeldeseite **„Mit Microsoft anmelden“**. Melde Dich damit an (aus dem Netz, Schritt 17). Unter „Benutzer“ erscheint Dein Konto mit dem Hinweis **SSO**. Rolle und Name kommen ab sofort aus Entra und werden bei jeder Anmeldung aktualisiert.
 
-## Schritt 10 – Lokale Anmeldung abschalten (empfohlen)
+## Schritt 19 – Lokale Anmeldung abschalten (empfohlen)
 
 Erst wenn die Microsoft-Anmeldung als Administrator funktioniert:
 
@@ -359,20 +643,16 @@ az webapp config appsettings set --resource-group $RG --name $APP --settings AUT
 az webapp restart --resource-group $RG --name $APP
 ```
 
-Ab dann gibt es keine Passwort-Anmeldung mehr. Ein verlorenes `ADMIN_PASSWORD` ist kein Risiko mehr. Wenn die Entra-Anmeldung einmal
-nicht funktioniert, setzt Du `AUTH_LOCAL_ENABLED=1` wieder und meldest Dich als `admin` an. Das geht aber nur, wenn die lokale Anmeldung
-mindestens einmal aktiv war (Standard-Administrator wird beim allerersten Start angelegt).
+Ab dann gibt es keine Passwort-Anmeldung mehr. Wenn die Entra-Anmeldung einmal nicht funktioniert, setzt Du `AUTH_LOCAL_ENABLED=1` wieder und meldest Dich als `admin` an. Das geht nur, wenn die lokale Anmeldung mindestens einmal aktiv war (der Standard-Administrator wird beim allerersten Start angelegt).
 
-## Schritt 11 – Datensicherung prüfen und Wiederherstellung üben
-
-**Was gesichert wird:**
+## Schritt 20 – Datensicherung und Wiederherstellung
 
 | Was | Wie | Aufbewahrung |
 |---|---|---|
-| Datenbank | automatische Sicherung des Flexible Servers, Wiederherstellung auf Zeitpunkt | 35 Tage (Schritt 5) |
-| Dokumente (PDFs) | Blob-Versionierung und Soft Delete | 30 Tage nach dem Löschen (Schritt 6) |
+| Datenbank | automatische Sicherung des Flexible Servers, Wiederherstellung auf Zeitpunkt | 35 Tage (Schritt 10) |
+| Dokumente (PDFs) | Blob-Versionierung und Soft Delete | 30 Tage nach dem Löschen (Schritt 8) |
 | Entra-Rollenzuweisungen | liegen in Entra ID, nicht in der App | – |
-| Optional: unabhängige Kopie der Datenbank | `scripts/backup.sh` (pg_dump) in ein **anderes** Speicherkonto | frei wählbar |
+| Optional: unabhängige Kopie der Datenbank | `scripts/backup.sh` (pg_dump), **nur von einem Rechner im Netz** (z. B. kleine VM oder Bastion) in ein **anderes** Speicherkonto | frei wählbar |
 
 Einstellung prüfen:
 
@@ -380,19 +660,19 @@ Einstellung prüfen:
 az postgres flexible-server show --resource-group $RG --name $PG --query backup
 ```
 
-**Wiederherstellung der Datenbank üben** (vor dem Produktivstart einmal, danach z. B. halbjährlich):
+**Wiederherstellung üben** (vor dem Produktivstart einmal, danach z. B. halbjährlich). Die Wiederherstellung legt einen **neuen** Server an, mit privatem Ziel (`SUBNET_DB_ID` und `ZONE_PG_ID` stellst Du in einem neuen Terminal mit Anhang E wieder her):
 
 ```bash
 az postgres flexible-server restore \
   --resource-group $RG --name $PG-restore --source-server $PG \
-  --restore-time "2026-10-12T08:00:00Z"
+  --restore-time "2026-11-10T08:00:00Z" \
+  --subnet $SUBNET_DB_ID --private-dns-zone $ZONE_PG_ID
 ```
 
-Das legt einen **neuen** Server `$PG-restore` mit dem Stand zu diesem Zeitpunkt (UTC) an. Der Zeitpunkt muss in der Vergangenheit und innerhalb der
-Aufbewahrungszeit liegen. Um die App darauf umzustellen, setzt Du `DATABASE_URL` auf den neuen Servernamen und startest neu. Den
-Übungsserver löschst Du danach wieder (`az postgres flexible-server delete --resource-group $RG --name $PG-restore --yes`).
+Der Zeitpunkt (UTC) muss in der Vergangenheit und innerhalb der Aufbewahrungszeit liegen. Um die App auf den neuen Server umzustellen, liest Du dessen `fullyQualifiedDomainName` aus (wie in Schritt 10), setzt `DATABASE_URL` neu und startest die App neu. Den Übungsserver löschst Du danach wieder
+(`az postgres flexible-server delete --resource-group $RG --name $PG-restore --yes`).
 
-**Gelöschtes Dokument zurückholen:**
+**Gelöschtes Dokument zurückholen** (aus dem Netz, oder im Portal, denn der öffentliche Zugang des Speicherkontos ist aus):
 
 ```bash
 az storage blob undelete --account-name $SA --container-name documents --name "onboardings/<ID>/<Datei>.pdf" --auth-mode login
@@ -400,65 +680,120 @@ az storage blob undelete --account-name $SA --container-name documents --name "o
 
 Den Blob-Namen findest Du im Portal unter Speicherkonto → Container `documents` (Ansicht „Gelöschte Blobs anzeigen“).
 
-**Wichtig:** Nach einer zeitpunktgenauen Wiederherstellung der Datenbank können Dokument-Blobs existieren, die in der Datenbank nicht
-mehr referenziert sind, oder Datenbankeinträge ohne Blob, wenn das Blob nach dem gewählten Zeitpunkt gelöscht wurde. Blob-Versionen
-und Soft Delete helfen beim Zurückholen.
+**Wichtig:** Nach einer zeitpunktgenauen Wiederherstellung der Datenbank können Dokument-Blobs existieren, die in der Datenbank nicht mehr referenziert sind, oder Datenbankeinträge ohne Blob, wenn das Blob nach dem gewählten Zeitpunkt gelöscht wurde. Blob-Versionen und Soft Delete helfen beim Zurückholen.
 
-## Schritt 12 – Updates einspielen
+## Schritt 21 – Updates einspielen
 
-Neuen Stand holen, neues Image bauen, App darauf umstellen:
+Neuen Stand holen, neues Image **in Azure** bauen, App darauf umstellen (die Befehle laufen über öffentliche Adressen bzw. die Verwaltungsschnittstelle, es ist keine Netzanbindung nötig):
 
 ```bash
-cd ~/ServiceCheckWebApp && git pull
+cd ServiceCheckWebApp && git pull
 az acr build --registry $ACR --image servicecheck:2 --file Dockerfile .
 az webapp config container set --resource-group $RG --name $APP --container-image-name $ACR.azurecr.io/servicecheck:2
 az webapp restart --resource-group $RG --name $APP
 ```
 
-Datenbankänderungen laufen beim Start automatisch als Migration. Erhöhe das Tag (`:2`, `:3`, …) bei jedem Update, damit klar ist, was läuft und
-Du bei Problemen auf das vorherige Tag zurückstellen kannst. **Vor größeren Updates** zusätzlich eine Datenbanksicherung machen
-(`scripts/backup.sh`, siehe README) oder wenigstens den Wiederherstellungszeitpunkt notieren.
+Datenbankänderungen laufen beim Start automatisch als Migration. Erhöhe das Tag (`:2`, `:3`, …) bei jedem Update, damit klar ist, was läuft, und Du bei Problemen auf das vorherige Tag zurückstellen kannst. **Vor größeren Updates** machst Du zusätzlich eine
+Datenbanksicherung (`scripts/backup.sh`, aus dem Netz) oder notierst wenigstens den Wiederherstellungszeitpunkt.
+
+**Logs im privaten Netz:** `az webapp log tail` und das Portal-Logstream brauchen die Verwaltungsadresse der App und funktionieren **nur noch aus dem Netz**. Empfohlen: die App-Logs an einen Log-Analytics-Arbeitsbereich senden (Diagnoseeinstellungen), den Du im Portal einsehen kannst.
 
 ---
 
-## Fehlersuche
+## Anhang A – Welche Ports zwischen den Subnetzen nötig sind
+
+**Wie die Anleitung geschrieben ist, legt Ihr keine Netzwerksicherheitsgruppen (NSGs) an.** Dann ist der gesamte Verkehr innerhalb des virtuellen Netzes erlaubt, und alles funktioniert ohne Portregeln. Schreibt Eure IT NSGs vor, braucht Ihr diese Freigaben:
+
+| Von | Nach | Port | Wofür |
+|---|---|---|---|
+| `snet-app` (Web-App, ausgehend) | `snet-db` (PostgreSQL) | **TCP 5432** | Datenbankzugriff |
+| `snet-app` | `snet-pe` (Private Endpoint Blob) | **TCP 443** | Dokumente ablegen und abrufen |
+| Firmennetz / VPN-Benutzer | `snet-pe` (Private Endpoint Web-App) | **TCP 443** | App im Browser aufrufen |
+| Firmennetz / VPN-Benutzer | `snet-pe` | TCP 80 (optional) | nur für die Weiterleitung von `http://` auf `https://` |
+| Administrator-Rechner im Netz | `snet-db` | TCP 5432 | `psql` und `scripts/backup.sh` |
+| Administrator (aus dem Netz) | `snet-pe` (Verwaltungsadresse der Web-App) | TCP 443 | Logs und App-Terminal |
+| `snet-app` | Internet, `login.microsoftonline.com` | **TCP 443** | Entra-Anmeldung (Token abholen, Schlüssel prüfen). Das Diensttag `AzureActiveDirectory` deckt das ab |
+| `snet-app`, `snet-db`, `snet-pe` | Azure-DNS `168.63.129.16` | UDP/TCP 53 | Namensauflösung. **Nicht blockieren** |
+
+- `snet-app` braucht **keinen eingehenden** Verkehr. Die VNet-Integration ist rein ausgehend.
+- **Private Endpoints und NSGs:** Standardmäßig gelten NSG-Regeln für Private Endpoints **nicht**. Willst Du den Zugriff darauf per NSG begrenzen, muss das Subnetz `snet-pe` mit `--private-endpoint-network-policies Enabled` angelegt sein.
+- Beschränkst Du innerhalb des Netzes den Verkehr, brauchst Du explizite Sperrregeln. Die Standardregeln einer NSG erlauben den Verkehr im virtuellen Netz.
+- **Datenbank-Subnetz:** Schränke hier ausgehend nichts ein, ohne die aktuellen Microsoft-Vorgaben für delegierte PostgreSQL-Subnetze zu prüfen. Nach meinem Kenntnisstand gibt es Abhängigkeiten zu Azure-Diensten.
+- **Container Registry:** Das Image zieht die Plattform von der öffentlichen Registry, dafür brauchst Du keine Regel in Deinem Netz.
+- Eine zentrale Firewall im Hub-Netz bringt eigene Regeln mit.
+
+## Anhang B – Fehlersuche
 
 | Symptom | Mögliche Ursache und Abhilfe |
 |---|---|
-| `MissingSubscriptionRegistration` | Dienst-Registrierung fehlt, siehe Schritt 3 |
-| `az appservice plan create` meldet `Operation cannot be completed without additional quota` (`Current Limit (B1 VMs): 0`) | Das Kontingent für diese Stufe ist in Eurem Abonnement und dieser Region 0. Eine andere Stufe versuchen (`PLAN_SKU=S1` oder `P1V3`) oder im Portal unter *Abonnements → Nutzung + Kontingente* bzw. per Supportanfrage (Kontingenttyp App Service) erhöhen lassen. Die Region muss die des Netzes bleiben |
-| `acr build` bricht mit `sh: tsc: Permission denied` (Exit 126) ab | Ein lokales `node_modules` (z. B. von einem anderen Rechner oder Betriebssystem) wurde ins Image kopiert und hat das Ausführrecht von `tsc` verloren. Mit dem aktuellen Stand nicht mehr möglich (`git pull`, danach `acr build` wiederholen) |
-| `acr build` schlägt fehl mit Hinweis auf Tasks | ACR Tasks im Abonnement gesperrt, Alternative in Schritt 4 |
-| Name „bereits vergeben“ (ACR, Speicherkonto, Server, Web-App) | `SUFFIX` ändern und Schritt 2 wiederholen |
-| Web-App zeigt „Application Error“ oder 503 | `az webapp log tail`. Meist: Image konnte nicht geladen werden (Rolle `AcrPull` noch nicht wirksam, dann neu starten) oder falsche Einstellungen |
-| Log: `DATABASE_URL ist leer oder ungültig` (ältere Version: `Could not parse SQLAlchemy URL`) | Die Einstellung `DATABASE_URL` ist leer oder falsch aufgebaut. Variablen prüfen und Schritt 7c wiederholen. Eingestellte Werte ansehen (ohne Geheimnisse): `az webapp config appsettings list --resource-group $RG --name $APP --query "[].{name:name, laenge:length(value)}" --output table`. Eine Länge von 0 bedeutet leer |
-| Log: `SECRET_KEY muss gesetzt sein und mindestens 32 Zeichen haben` oder `ADMIN_PASSWORD muss gesetzt sein` | Einstellung fehlt oder ist zu kurz, Schritt 7c wiederholen. Mit PostgreSQL startet die App sonst absichtlich nicht (`ADMIN_PASSWORD` wird nur beim allerersten Start geprüft) |
-| Log: `password authentication failed` | `PGPASS` stimmt nicht mit dem Passwort des Datenbankservers überein, siehe Hinweis in Schritt 2 (Passwort zurücksetzen) |
-| Log: Verbindungsfehler zur Datenbank / `timeout` | Die Firewall lässt die App nicht durch (nach Schritt 8b: neue ausgehende Adresse der Web-App fehlt, Schritt 8b Punkt 1 wiederholen). `DATABASE_URL` prüfen (Servername, Passwort, `?sslmode=require`). Server gestartet? |
-| Log: `Die Datenbank enthält Tabellen, wurde aber nicht mit Migrationen angelegt` | Es liegt eine Datenbank aus einer sehr alten Version vor. Neue, leere Datenbank verwenden |
-| Dokument ablegen oder herunterladen schlägt fehl (503 „Dokumentenspeicher“) | Rolle *Storage Blob Data Contributor* der Managed Identity fehlt oder noch nicht wirksam (Schritt 7b), oder `AZURE_STORAGE_ACCOUNT_URL` falsch |
-| Anmeldeseite: „Für dieses Konto ist keine Rolle vergeben“ | Benutzer ist in Entra keiner App-Rolle zugewiesen (Schritt 9.6) |
+| Zeilenweise `zsh: command not found: #` oder Variable bleibt leer | In der zsh sind Kommentare beim Einfügen nicht aktiv: `setopt interactive_comments` (Schritt 2.3) |
+| `SyntaxWarning: "\/" is an invalid escape sequence` | Harmlose Warnung der Azure-CLI auf neuem Python, keine Fehlermeldung. Mit `export PYTHONWARNINGS=ignore` ausblenden |
+| `MissingSubscriptionRegistration` | Dienst-Registrierung fehlt: `az provider register --namespace <Dienst> --wait` (Schritt 4) |
+| `AuthorizationFailed` | Dir fehlt eine Rolle auf der Ressourcengruppe (Schritt 1) |
+| `LinkedAuthorizationFailed` oder Fehler beim Verwenden des Subnetzes | Dir fehlt auf dem **Netz** in `$RG_NET` die Rolle *Netzwerkmitwirkender* bzw. das Recht `subnets/join/action`. Die IT muss sie vergeben |
+| `RequestDisallowedByPolicy` | Eine Azure Policy verbietet die Aktion. Erlaubte Werte (SKU, Region, Tags) aus der Meldung nehmen oder bei der IT eine Ausnahme beantragen. Richtlinien ansehen: `az policy assignment list --disable-scope-strict-match true --query "[].{name:displayName, scope:scope}" --output table` |
+| `az appservice plan create`: `Operation cannot be completed without additional quota` | **Kontingent** für die Stufe in der Region ist 0, kein Rechte- oder Richtlinienproblem. Andere Stufe versuchen oder Kontingent beantragen, siehe Schritt 12. Fehlgeschlagene Vorgänge ansehen: `az monitor activity-log list --resource-group $RG --offset 1d --status Failed --output json \| grep -o 'Current Limit ([^)]*): [0-9]*' \| sort -u` |
+| `az webapp create`: `Webapp ... already exists ... Unable to retrieve details` | Der Name ist weltweit vergeben (oft durch einen früheren Versuch in einem anderen Abonnement). Neues `SUFFIX` wählen, Schritt 4 |
+| Name „bereits vergeben“ bei Registry, Speicherkonto oder Datenbankserver | Neues `SUFFIX` wählen und Variablen neu laden (Schritt 3, 4) |
+| `acr build` bricht mit `sh: tsc: Permission denied` (Exit 126) ab | Ein lokales `node_modules` (z. B. von einem anderen Rechner) wurde ins Image kopiert. Mit dem aktuellen Stand nicht mehr möglich: `git pull`, dann `acr build` wiederholen |
+| `acr build` schlägt mit Hinweis auf Tasks fehl | ACR Tasks im Abonnement gesperrt, Alternative in Schritt 7 |
+| `az postgres flexible-server create` meldet eine fehlerhafte DNS-Zone | Der Zonenname muss auf `.private.postgres.database.azure.com` enden und in `$RG` liegen (oder die volle Ressourcen-ID verwenden) |
+| `az postgres flexible-server create`: SKU nicht verfügbar oder Kontingent | Anderes SKU wählen, siehe Schritt 10 (`list-skus`) |
+| `ResourceNotFound ... pe-blob` (oder `pe-app`) bei `dns-zone-group create` | Der Private Endpoint wurde nicht angelegt. `az network private-endpoint list --resource-group $RG --output table`, den vorherigen Befehl erneut ausführen und die Fehlermeldung lesen (Schritt 11) |
+| `az webapp vnet-integration add` schlägt fehl | Subnetz nicht an `Microsoft.Web/serverFarms` delegiert, oder bereits von einem anderen App-Service-Plan belegt, oder Plan und Netz in verschiedenen Regionen |
+| Web-App zeigt „Application Error“ oder 503 | Protokoll lesen (`az webapp log tail`, solange erreichbar). Meist: Image konnte nicht geladen werden (Rolle `AcrPull` noch nicht wirksam, Neustart) oder falsche Einstellungen |
+| Log: `DATABASE_URL ist leer oder ungültig` | Die Einstellung ist leer oder falsch aufgebaut. Variablen prüfen (Schritt 13). Eingestellte Werte ansehen, ohne Geheimnisse: `az webapp config appsettings list --resource-group $RG --name $APP --query "[].{name:name, laenge:length(value)}" --output table`. Länge 0 bedeutet leer |
+| Log: `SECRET_KEY muss gesetzt sein und mindestens 32 Zeichen haben` oder `ADMIN_PASSWORD muss gesetzt sein` | Einstellung fehlt oder ist zu kurz, Schritt 13 wiederholen. Mit PostgreSQL startet die App sonst absichtlich nicht (`ADMIN_PASSWORD` wird nur beim allerersten Start geprüft) |
+| Log: `password authentication failed` | `PGPASS` stimmt nicht mit dem Datenbankpasswort überein: Passwort zurücksetzen (Schritt 3) |
+| Log: `could not translate host name` / `Name or service not known` (Datenbank) | Private DNS-Zone der Datenbank nicht mit dem Netz verknüpft (Schritt 9), App nicht in das Netz integriert (Schritt 13) oder `$PG_HOST` falsch (aus `fullyQualifiedDomainName` übernehmen) |
+| Log: Timeout zur Datenbank | VNet-Integration fehlt oder zeigt auf das falsche Subnetz, Datenbank-Subnetz nicht an PostgreSQL delegiert (Schritt 6), oder eine NSG blockiert Port 5432 (Anhang A) |
+| Log: `Die Datenbank enthält Tabellen, wurde aber nicht mit Migrationen angelegt` | Eine Datenbank aus einer sehr alten Version. Neue, leere Datenbank verwenden |
+| Dokument ablegen oder abrufen liefert 503 („Dokumentenspeicher“) | Private Endpoint oder DNS-Zone des Blob-Speichers fehlt (Schritt 9, 11; `getent hosts $SA.blob.core.windows.net` aus dem Netz muss eine Adresse aus 10.163.13.68–.94 liefern), Rolle *Storage Blob Data Contributor* fehlt (Schritt 12), oder `AZURE_STORAGE_ACCOUNT_URL` falsch |
+| Browser: „403 – Web App – Unavailable“ oder keine Seite | Der Name zeigt noch auf die öffentliche Adresse (DNS im Firmennetz, Schritt 17), oder die Verbindung ins Netz fehlt |
+| `az webapp log tail` hängt oder liefert nichts | Verwaltungsadresse nur im Netz erreichbar (Schritt 21, Logs im privaten Netz) |
+| Anmeldeseite: „Für dieses Konto ist keine Rolle vergeben“ | Benutzer ist in Entra keiner App-Rolle zugewiesen (Schritt 18, Punkt 6) |
 | Anmeldeseite: „Die Antwort von Microsoft konnte nicht überprüft werden“ / „Anmeldung bei Microsoft fehlgeschlagen“ | `OIDC_TENANT_ID`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` falsch, Clientschlüssel abgelaufen oder Umleitungs-URI weicht ab |
-| Microsoft meldet `AADSTS50011` (Antwort-URL stimmt nicht überein) | Die Umleitungs-URI in der App-Registrierung und `OIDC_REDIRECT_URI` müssen **exakt** gleich sein (Schreibweise, `https`) |
+| Microsoft meldet `AADSTS50011` (Antwort-URL stimmt nicht überein) | Umleitungs-URI in der App-Registrierung und `OIDC_REDIRECT_URI` müssen **exakt** gleich sein (Schreibweise, `https`) |
 | Microsoft meldet `AADSTS50105` (Benutzer nicht zugewiesen) | Weil „Zuweisung erforderlich“ = Ja: Benutzer der App zuweisen |
-| Kein Button „Mit Microsoft anmelden“ | Eine der vier `OIDC_…`-Einstellungen fehlt. Prüfen: `https://$APP.azurewebsites.net/api/auth/config` muss `"oidc":true` zeigen |
+| Kein Button „Mit Microsoft anmelden“ | Eine der vier `OIDC_…`-Einstellungen fehlt. Prüfen: `https://$APP.azurewebsites.net/api/auth/config` (aus dem Netz) muss `"oidc":true` zeigen |
 
-## Aufräumen (alles wieder löschen)
+## Anhang C – Aufräumen
 
-Löscht **alle** Ressourcen der Gruppe unwiderruflich, inklusive Datenbank und Dokumente:
+Löscht die Test-VM und **alle** Ressourcen der Anwendung unwiderruflich, inklusive Datenbank und Dokumente. Das virtuelle Netz in `$RG_NET` bleibt unberührt, solange Du diese Gruppe nicht löschst:
 
 ```bash
+az group delete --name $RG_TEST --yes --no-wait
 az group delete --name $RG --yes --no-wait
 ```
 
-Die App-Registrierung in Entra bleibt bestehen und muss dort separat gelöscht werden.
+Die Test-VM kostet laufend Geld, lösche sie, sobald der Test abgeschlossen ist. Die App-Registrierung in Entra bleibt bestehen und muss dort separat gelöscht werden.
+Gibt es noch Ressourcen einer **früheren Bereitstellung** (z. B. in einem anderen Abonnement), prüfe, ob sie noch gebraucht werden. Sie laufen weiter und kosten.
 
-## Empfohlene nächste Schritte für den Dauerbetrieb
+## Anhang D – Empfohlene nächste Schritte für den Dauerbetrieb
 
-- Datenbank ohne öffentlichen Endpunkt (virtuelles Netzwerk bzw. privater Endpunkt, siehe Schritt 5) und einen eigenen Datenbankbenutzer mit eingeschränkten Rechten statt
-  des Server-Administrators.
+- Einen eigenen Datenbankbenutzer mit eingeschränkten Rechten statt des Server-Administrators.
 - Geheimnisse (`SECRET_KEY`, `DATABASE_URL`, `OIDC_CLIENT_SECRET`) in einem **Key Vault** ablegen und per Key-Vault-Referenz in die App-Einstellungen einbinden.
+- **Netzwerksicherheitsgruppen** je Subnetz nach Anhang A, sofern die IT sie verlangt.
+- App-Logs an Log Analytics senden, Warnungen (Azure Monitor) für ausgefallene Integritätsprüfung, Datenbank-Speicher und ablaufenden Clientschlüssel.
 - Eigene Domain mit Zertifikat. Danach `OIDC_REDIRECT_URI` und die Umleitungs-URI in Entra anpassen.
-- Warnungen (Azure Monitor) für ausgefallene Integritätsprüfung, Datenbank-Speicher und ablaufenden Clientschlüssel.
 - Die Ressourcen als Code (Bicep oder Terraform) und eine Pipeline für Updates.
 - Zusätzliche, unabhängige Datenbanksicherung (`scripts/backup.sh`) in ein separates Speicherkonto oder Abonnement.
+- Vor dem Einsatz mit echten Kundendaten: die offenen Punkte der Datenschutzprüfung (Sicherheits-Header, Schutz vor Passwort-Raten, Auskunfts- und Löschwerkzeuge, Aufbewahrungsfristen, Protokoll) abarbeiten.
+
+## Anhang E – Abgeleitete Werte nach einem neuen Terminal wiederherstellen
+
+`~/azure.env` enthält nur Eure **Eingaben**. Werte, die erst durch die Schritte entstehen (Netz-IDs, Datenbank-URL), gehen mit dem Terminalfenster verloren. Öffnest Du mitten in der Anleitung ein neues Fenster, lädst Du zuerst `source ~/azure.env`
+und löst sie dann wieder auf. Werte für Ressourcen, die es noch nicht gibt, bleiben leer, das ist in Ordnung.
+
+```bash
+source ~/azure.env
+VNET_ID=$(az network vnet show --resource-group $RG_NET --name $VNET --query id --output tsv)
+SUBNET_DB_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_DB --query id --output tsv)
+SUBNET_APP_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_APP --query id --output tsv)
+SUBNET_PE_ID=$(az network vnet subnet show --resource-group $RG_NET --vnet-name $VNET --name $SNET_PE --query id --output tsv)
+ZONE_PG_ID=$(az network private-dns zone show --resource-group $RG --name $ZONE_PG --query id --output tsv)
+SA_ID=$(az storage account show --resource-group $RG --name $SA --query id --output tsv)
+PG_HOST=$(az postgres flexible-server show --resource-group $RG --name $PG --query fullyQualifiedDomainName --output tsv)
+DATABASE_URL="postgresql+psycopg://$PGADMIN:$PGPASS@$PG_HOST:5432/$DBNAME?sslmode=require"
+for v in VNET_ID SUBNET_DB_ID SUBNET_APP_ID SUBNET_PE_ID ZONE_PG_ID SA_ID PG_HOST; do eval "val=\${$v}"; [ -z "$val" ] && echo "FEHLT (noch nicht angelegt?): $v"; done; echo "Prüfung beendet"
+```
