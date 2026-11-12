@@ -83,6 +83,9 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .item { padding: 10px 0; border-bottom: 1px solid var(--line); } .item:last-child { border-bottom: 0; }
 .item-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .item .note { margin-top: 6px; font-size: 13px; }
+.pre { white-space: pre-line; }
+.howto { margin-top: 6px; padding: 6px 10px; font-size: 13px; border-left: 3px solid var(--brand); border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--brand) 8%, transparent); }
+.howto > b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .seg { display: inline-flex; flex-shrink: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .seg button { font: inherit; font-size: 12px; background: var(--card); color: var(--ink); border: 0; border-right: 1px solid var(--line); padding: 5px 10px; cursor: pointer; }
 .seg button:last-child { border-right: 0; } .seg button:disabled { cursor: default; opacity: .7; }

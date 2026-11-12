@@ -39,15 +39,15 @@ function ParameterEditor({ product, scope, admin, onChanged }: { product: Produc
       <ErrorBox error={all.error} />
       {all.data && list.length === 0 && <p className="muted">{admin ? "Dieser Katalog ist noch leer. Lege mit „Parameter hinzufügen“ die technischen Prüfpunkte an." : "Dieser Katalog ist noch leer."}</p>}
       <table>
-        <thead><tr><th>Parameter</th><th>Gew.</th><th>K.O.</th><th>Empfehlung bei Abweichung</th>{admin && <th />}</tr></thead>
+        <thead><tr><th>Parameter</th><th>Anleitung</th><th>Gew.</th><th>K.O.</th><th>Empfehlung bei Abweichung</th>{admin && <th />}</tr></thead>
         <tbody>
           {categories.map((cat) => (
             <Fragment key={cat}>
-              <tr className="cat-row"><td colSpan={5}>{cat}</td></tr>
+              <tr className="cat-row"><td colSpan={6}>{cat}</td></tr>
               {list.filter((p) => p.category === cat).map((p) => (
                 <tr key={p.id}>
-                  <td>{p.name}{p.details && <small className="block muted">{p.details}</small>}
-                    {p.description && <small className="block muted"><b>Anleitung:</b> {p.description}</small>}</td>
+                  <td>{p.name}{p.details && <small className="block muted pre">{p.details}</small>}</td>
+                  <td className="pre">{p.description}</td>
                   <td>{p.weight}</td><td>{p.is_blocker ? <span className="badge ko">K.O.</span> : ""}</td>
                   <td className="muted">{p.recommendation}</td>
                   {admin && <td className="actions"><button className="btn ghost" onClick={() => { setErr(null); setEdit({ ...p }); }}>Bearbeiten</button><button className="btn ghost danger" onClick={() => remove(p)}>Löschen</button></td>}
