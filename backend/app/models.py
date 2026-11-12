@@ -76,7 +76,8 @@ class Parameter(Base):
     extension_id: Mapped[int | None] = mapped_column(ForeignKey("product_extensions.id"), nullable=True)  # None = Basiskatalog
     category: Mapped[str] = mapped_column(String(200), default="Allgemein")
     name: Mapped[str] = mapped_column(String(300))
-    description: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")  # in der Oberfläche "Anleitung" (wie wird geprüft)
+    details: Mapped[str] = mapped_column(Text, default="")  # in der Oberfläche "Beschreibung"
     weight: Mapped[int] = mapped_column(Integer, default=5)  # 1..10
     is_blocker: Mapped[bool] = mapped_column(Boolean, default=False)
     recommendation: Mapped[str] = mapped_column(Text, default="")
@@ -130,7 +131,8 @@ class CheckItem(Base):
     check_id: Mapped[int] = mapped_column(ForeignKey("service_checks.id"))
     category: Mapped[str] = mapped_column(String(200))
     name: Mapped[str] = mapped_column(String(300))
-    description: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")  # "Anleitung"
+    details: Mapped[str] = mapped_column(Text, default="")  # "Beschreibung"
     weight: Mapped[int] = mapped_column(Integer, default=5)
     is_blocker: Mapped[bool] = mapped_column(Boolean, default=False)
     recommendation: Mapped[str] = mapped_column(Text, default="")

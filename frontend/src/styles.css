@@ -55,7 +55,8 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 @media (prefers-color-scheme: dark) { .alert.error { background: #3a1d1b; color: #f3b5ae; border-color: #5c2d29; } .alert.warn { background: #3a3117; color: #ecd283; border-color: #5c4d1d; } }
 
 .modal-bg { position: fixed; inset: 0; background: rgba(10,15,20,.5); display: grid; place-items: center; z-index: 10; padding: 16px; }
-.modal { background: var(--card); border-radius: 10px; padding: 18px 20px; width: 560px; max-width: 100%; max-height: 92vh; overflow: auto; }
+/* Mindestbreite 560px; wächst mit, wenn ein Eingabefeld breiter gezogen wird (bis zur Fensterbreite). */
+.modal { background: var(--card); border-radius: 10px; padding: 18px 20px; width: fit-content; min-width: min(560px, 100%); max-width: 100%; max-height: 92vh; overflow: auto; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; } .modal-head h3 { margin: 0; font-size: 16px; }
 
 .tl { display: inline-flex; flex-direction: column; gap: 3px; background: #2b3038; padding: 4px; border-radius: 99px; vertical-align: middle; }

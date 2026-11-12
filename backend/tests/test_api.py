@@ -120,6 +120,32 @@ def test_build_own_catalog_from_scratch(client, auth):
     assert mine["products"][0]["parameter_count"] == 1
 
 
+def test_parameter_description_and_instruction_reach_the_check(client, auth):
+    """Beschreibung (details) und Anleitung (description) werden am Parameter gepflegt und im Check übernommen."""
+    offer = client.post("/api/offers", json={"name": "Managed Backup 2"}, headers=auth).json()
+    prod = client.post(f"/api/offers/{offer['id']}/products", json={"name": "Veeam 2"}, headers=auth).json()
+    p = client.post(f"/api/products/{prod['id']}/parameters", headers=auth, json={
+        "category": "Backup", "name": "Immutable Repository", "weight": 9,
+        "details": "Unveränderbare Kopie der Backups", "description": "Repository-Einstellungen im Veeam-Backup-Manager prüfen"})
+    assert p.status_code == 201
+    assert p.json()["details"] == "Unveränderbare Kopie der Backups"
+    assert p.json()["description"].startswith("Repository-Einstellungen")
+
+    # ohne Angabe bleibt die Beschreibung leer (bestehende Clients, alte Parameter)
+    q = client.post(f"/api/products/{prod['id']}/parameters", json={"category": "Backup", "name": "Offsite-Kopie"}, headers=auth)
+    assert q.json()["details"] == ""
+
+    cust = client.post("/api/customers", json={"name": "Details AG"}, headers=auth).json()
+    check = client.post("/api/checks", json={"customer_id": cust["id"], "product_id": prod["id"]}, headers=auth).json()
+    item = next(i for i in check["items"] if i["name"] == "Immutable Repository")
+    assert item["details"] == "Unveränderbare Kopie der Backups" and item["description"].startswith("Repository-Einstellungen")
+
+    # Katalogänderung wirkt nicht auf den bestehenden Check zurück
+    client.put(f"/api/parameters/{p.json()['id']}", headers=auth, json={**p.json(), "details": "geändert"})
+    again = client.get(f"/api/checks/{check['id']}", headers=auth).json()
+    assert next(i for i in again["items"] if i["name"] == "Immutable Repository")["details"] == "Unveränderbare Kopie der Backups"
+
+
 def test_new_product_gets_default_onboarding_template(client, auth):
     offer = client.post("/api/offers", json={"name": "Managed Firewall"}, headers=auth).json()
     prod = client.post(f"/api/offers/{offer['id']}/products", json={"name": "FortiGate"}, headers=auth).json()

@@ -27,7 +27,8 @@ function ItemRow({ item, locked, onChange }: { item: CheckItem; locked: boolean;
           <b>{item.name}</b>
           {item.is_blocker && <span className="badge ko" title="Bei „Nicht erfüllt“ wird die Ampel Rot">K.O.</span>}
           <span className="badge" title="Gewichtung">Gewicht {item.weight}</span>
-          {item.description && <small className="block muted">{item.description}</small>}
+          {item.details && <small className="block muted">{item.details}</small>}
+          {item.description && <small className="block muted"><b>Anleitung:</b> {item.description}</small>}
         </div>
         <div className="seg" role="radiogroup" aria-label={item.name}>
           {ANSWERS.map((a) => (

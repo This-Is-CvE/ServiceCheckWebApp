@@ -13,7 +13,7 @@ function ParameterEditor({ product, scope, admin, onChanged }: { product: Produc
   const [edit, setEdit] = useState<Partial<Parameter> | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const categories = [...new Set(list.map((p) => p.category))];
-  const blank = (category?: string): Partial<Parameter> => ({ extension_id: scope, category: category ?? categories[categories.length - 1] ?? "Allgemein", name: "", description: "", weight: 5, is_blocker: false, recommendation: "" });
+  const blank = (category?: string): Partial<Parameter> => ({ extension_id: scope, category: category ?? categories[categories.length - 1] ?? "Allgemein", name: "", details: "", description: "", weight: 5, is_blocker: false, recommendation: "" });
 
   async function save(e: FormEvent, another = false) {
     e.preventDefault();
@@ -46,7 +46,8 @@ function ParameterEditor({ product, scope, admin, onChanged }: { product: Produc
               <tr className="cat-row"><td colSpan={5}>{cat}</td></tr>
               {list.filter((p) => p.category === cat).map((p) => (
                 <tr key={p.id}>
-                  <td>{p.name}{p.description && <small className="block muted">{p.description}</small>}</td>
+                  <td>{p.name}{p.details && <small className="block muted">{p.details}</small>}
+                    {p.description && <small className="block muted"><b>Anleitung:</b> {p.description}</small>}</td>
                   <td>{p.weight}</td><td>{p.is_blocker ? <span className="badge ko">K.O.</span> : ""}</td>
                   <td className="muted">{p.recommendation}</td>
                   {admin && <td className="actions"><button className="btn ghost" onClick={() => { setErr(null); setEdit({ ...p }); }}>Bearbeiten</button><button className="btn ghost danger" onClick={() => remove(p)}>Löschen</button></td>}
@@ -63,7 +64,8 @@ function ParameterEditor({ product, scope, admin, onChanged }: { product: Produc
             <Field label="Kategorie"><input required list="cats" value={edit.category ?? ""} onChange={(e) => setEdit({ ...edit, category: e.target.value })} />
               <datalist id="cats">{categories.map((c) => <option key={c} value={c} />)}</datalist></Field>
             <Field label="Parameter / Prüffrage"><input required value={edit.name ?? ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} autoFocus /></Field>
-            <Field label="Erläuterung (Wie wird geprüft?)"><textarea rows={2} value={edit.description ?? ""} onChange={(e) => setEdit({ ...edit, description: e.target.value })} /></Field>
+            <Field label="Beschreibung"><textarea rows={3} value={edit.details ?? ""} onChange={(e) => setEdit({ ...edit, details: e.target.value })} /></Field>
+            <Field label="Anleitung"><textarea rows={2} value={edit.description ?? ""} onChange={(e) => setEdit({ ...edit, description: e.target.value })} /></Field>
             <div className="row">
               <Field label="Gewichtung (1–10)"><input type="number" min={1} max={10} value={edit.weight ?? 5} onChange={(e) => setEdit({ ...edit, weight: Number(e.target.value) })} /></Field>
               <label className="check-inline"><input type="checkbox" checked={!!edit.is_blocker} onChange={(e) => setEdit({ ...edit, is_blocker: e.target.checked })} /> K.O.-Kriterium (Ampel Rot, wenn nicht erfüllt)</label>

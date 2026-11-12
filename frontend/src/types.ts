@@ -6,11 +6,11 @@ export interface Customer { id: number; name: string; kt_number: string; contact
 export interface Extension { id: number; product_id: number; name: string; description: string; parameter_count: number }
 export interface Product { id: number; offer_id: number; name: string; description: string; green_min: number; yellow_min: number; parameter_count: number; extensions: Extension[] }
 export interface Offer { id: number; name: string; description: string; products: Product[] }
-export interface Parameter { id: number; product_id: number; extension_id: number | null; category: string; name: string; description: string; weight: number; is_blocker: boolean; recommendation: string; position: number }
+export interface Parameter { id: number; product_id: number; extension_id: number | null; category: string; name: string; description: string; details: string; weight: number; is_blocker: boolean; recommendation: string; position: number }
 export interface TemplateItem { id: number; product_id: number; extension_id: number | null; section: Section; label: string; help: string; field_type: "text" | "textarea" | "date"; required: boolean; position: number }
 
 export interface CheckListItem { id: number; title: string; product_id: number | null; customer_id: number; customer_name: string; customer_kt_number: string; offer_name: string; product_name: string; status: "draft" | "completed"; score: number | null; light: Light; created_at: string; completed_at: string | null }
-export interface CheckItem { id: number; category: string; extension_name: string | null; section: string; name: string; description: string; weight: number; is_blocker: boolean; recommendation: string; answer: Answer | null; comment: string }
+export interface CheckItem { id: number; category: string; extension_name: string | null; section: string; name: string; description: string; details: string; weight: number; is_blocker: boolean; recommendation: string; answer: Answer | null; comment: string }
 export interface Finding { item_id: number; category: string; name: string; answer: Answer; weight: number; is_blocker: boolean; priority: "critical" | "high" | "medium" | "low"; recommendation: string; comment: string }
 export interface CheckResult {
   score: number | null; light: Light; answered: number; total: number; complete: boolean;

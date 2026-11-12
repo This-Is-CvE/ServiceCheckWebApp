@@ -37,7 +37,8 @@ class ParameterIn(BaseModel):
     extension_id: int | None = None  # None = Basiskatalog des Produkts
     category: str = Field(default="Allgemein", max_length=200)
     name: str = Field(min_length=1, max_length=300)
-    description: str = ""
+    description: str = ""  # "Anleitung"
+    details: str = ""  # "Beschreibung"
     weight: int = Field(default=5, ge=1, le=10)
     is_blocker: bool = False
     recommendation: str = ""
@@ -130,6 +131,7 @@ class CheckItemOut(ORM):
     section: str
     name: str
     description: str
+    details: str
     weight: int
     is_blocker: bool
     recommendation: str

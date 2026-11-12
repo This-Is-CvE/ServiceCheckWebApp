@@ -62,7 +62,7 @@ def _selected_extensions(db: Session, product: Product, ids: list[int]) -> list[
 
 def _snapshot(params, extension: ProductExtension | None = None) -> list[CheckItem]:
     base = (extension.position if extension else 0) * 1000
-    return [CheckItem(category=p.category, name=p.name, description=p.description, weight=p.weight,
+    return [CheckItem(category=p.category, name=p.name, description=p.description, details=p.details, weight=p.weight,
                       is_blocker=p.is_blocker, recommendation=p.recommendation, position=base + n,
                       extension_name=extension.name if extension else None)
             for n, p in enumerate(params)]
