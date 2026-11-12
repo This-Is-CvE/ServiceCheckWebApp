@@ -48,7 +48,7 @@ Firmennetz ──(VPN/Peering, Eure IT)──► virtuelles Netz  10.163.13.0/24
 | 14 | Private Endpoint der Web-App | Du |
 | 15 | Privaten Zugang testen | Du |
 | 16 | Öffentlichen Zugang der Web-App abschalten | Du |
-| 17 | Zugang für Eure Benutzer (Netz und DNS) | IT |
+| 17 | Zugang für Eure Benutzer (Netz, DNS, eigener Name mit Zertifikat) | IT + Du |
 | 18 | Anmeldung mit Entra ID | Du + IT |
 | 19 | Lokale Anmeldung abschalten | Du |
 | 20 | Datensicherung und Wiederherstellung | Du |
@@ -656,9 +656,73 @@ Das Azure-Ende ist fertig. Damit Eure Mitarbeiter die App öffnen können, muss 
 
 1. **Netzwerkverbindung** zwischen Firmennetz und dem virtuellen Netz `10.163.13.0/24`: Site-to-Site-VPN, ExpressRoute, Peering zu einem vorhandenen Hub-Netz oder ein VPN pro Benutzer (Point-to-Site) in dieses Netz.
 2. **Namensauflösung:** Der Name `$APP.azurewebsites.net` muss bei den Arbeitsplätzen auf die **private** Adresse zeigen. Üblich ist eine bedingte Weiterleitung (Conditional Forwarder) im Firmen-DNS für `azurewebsites.net` an einen DNS-Resolver im virtuellen Netz (z. B. Azure DNS Private Resolver), der die private Zone aus Schritt 9 kennt.
-   Eine Alternative ist ein interner Eintrag mit eigenem Namen (z. B. `servicecheck.firma.de`) auf die private IP. Dafür braucht die App ein Zertifikat für diesen Namen. Die von Azure verwalteten kostenlosen Zertifikate sind für nicht öffentlich erreichbare Apps in der Regel nicht nutzbar. Prüft das mit der IT.
+   Einfacher und empfohlen ist ein interner Eintrag mit eigenem Namen (z. B. `servicecheck.firma.de`) auf die private IP, siehe **17.1**. Dann braucht Ihr keine Weiterleitung für `azurewebsites.net`, die Adresse ist kurz und gehört Euch.
 
-Die Anmeldung über Entra ID bleibt davon unberührt: Die Umleitung läuft im Browser des Benutzers, er muss dazu nur die App-Adresse und `login.microsoftonline.com` erreichen können. Die App selbst muss ausgehend `login.microsoftonline.com` erreichen. Das ist ohne eigene Netzwerksperren automatisch so.
+Die Anmeldung über Entra ID bleibt davon im Browser unberührt: Der Benutzer muss die App-Adresse und `login.microsoftonline.com` erreichen können. **Die App selbst muss ausgehend ebenfalls `login.microsoftonline.com` (TCP 443) erreichen.** Das ist nur dann automatisch so, wenn der ausgehende Verkehr der App nicht durch eine Firewall läuft. Mit `vnetRouteAllEnabled=true` (Schritt 13) geht aller Verkehr durch Euer Netz und damit durch Eure Firewall: Dort muss die Freigabe **`snet-app` → `login.microsoftonline.com`, TCP 443** (FQDN-Regel) stehen, siehe Schritt 18 und Anhang A.
+
+### 17.1 Eigener interner Name mit Zertifikat (empfohlen)
+
+Voraussetzungen: eine **öffentlich registrierte Domain**, bei der Ihr einen TXT-Eintrag setzen könnt (nur einmalig, für die Besitzprüfung), ein **internes DNS**, in dem Ihr einen A-Record anlegen könnt, und ein **Zertifikat** (PFX) für den Namen. Die kostenlosen, von Azure verwalteten Zertifikate gehen für eine nicht öffentlich erreichbare App nicht.
+
+**1. Namen festlegen** (hier als Beispiel):
+
+```bash
+source ~/azure.env
+APP_HOST=servicecheck.firma.de
+```
+
+**2. Besitzprüfung: TXT-Eintrag im öffentlichen DNS.** Hole die Verification-ID der App:
+
+```bash
+az webapp show --resource-group $RG --name $APP --query customDomainVerificationId --output tsv
+```
+
+Lege im **öffentlichen** DNS der Domain einen Eintrag an: Typ `TXT`, Name `asuid.servicecheck` (bei manchen Oberflächen der volle Name `asuid.servicecheck.firma.de`), Wert = die ID (ohne Anführungszeichen). Ein A-Record oder CNAME für `servicecheck` im öffentlichen DNS ist **nicht** nötig. Der Name soll von außen nicht auflösbar sein. Prüfen, dass der Eintrag öffentlich sichtbar ist:
+
+```bash
+nslookup -type=TXT asuid.servicecheck.firma.de 8.8.8.8
+```
+
+Der TXT-Eintrag wird nur beim Anlegen der Bindung gebraucht.
+
+**3. Hostnamen an die App binden:**
+
+```bash
+az webapp config hostname add --webapp-name $APP --resource-group $RG --hostname $APP_HOST
+az webapp config hostname list --webapp-name $APP --resource-group $RG --output table
+```
+
+**4. Internes DNS:** A-Record `$APP_HOST` auf die **private IP des Private Endpoints** der App (Schritt 14). Die Adresse liest Du so aus:
+
+```bash
+az network nic show --ids $(az network private-endpoint show --resource-group $RG --name pe-app --query "networkInterfaces[0].id" --output tsv) \
+  --query "ipConfigurations[0].privateIPAddress" --output tsv
+```
+
+Bis der Eintrag steht, kannst Du auf einem Windows-Rechner im Netz testweise in `C:\Windows\System32\drivers\etc\hosts` die Zeile `<private IP> servicecheck.firma.de` eintragen (als Administrator, danach wieder entfernen).
+
+**5. Zertifikat hochladen und binden.** Das Zertifikat kommt als **PFX mit privatem Schlüssel** aus Eurer internen CA (oder von einer öffentlichen CA). Anforderungen:
+
+- passwortgeschützt, mit Triple-DES verschlüsselt (neuere OpenSSL-Versionen verschlüsseln anders: bei Fehlern beim Hochladen das PFX neu exportieren oder mit `-legacy` umwandeln),
+- privater Schlüssel enthalten, dazu **Zwischenzertifikate und Root** in der Kette,
+- Verwendung **Serverauthentifizierung** (Extended Key Usage 1.3.6.1.5.5.7.3.1),
+- der Name `servicecheck.firma.de` als **SAN** (nicht nur im CN),
+- RSA mit mindestens 2048 Bit ist der sichere Weg. ECC-Zertifikate nimmt App Service laut Microsoft-Doku an, **nur als PFX-Upload** (nicht aus Key Vault). Über zulässige Kurven und Mindestlängen sagt die Doku nichts. Bei ECC also zuerst testen.
+
+```bash
+THUMB=$(az webapp config ssl upload --resource-group $RG --name $APP \
+  --certificate-file ~/Downloads/servicecheck.pfx --certificate-password 'PFX-PASSWORT' --query thumbprint --output tsv)
+az webapp config ssl bind --resource-group $RG --name $APP --certificate-thumbprint $THUMB --ssl-type SNI
+az webapp config ssl list --resource-group $RG --output table
+```
+
+Ein Neustart ist dafür **nicht** nötig. Ohne Zertifikat funktioniert der Name bereits, der Browser zeigt aber eine Warnung („Name stimmt nicht überein“), weil dann das Standardzertifikat von `*.azurewebsites.net` ausgeliefert wird.
+
+**6. Prüfen** (im Firmennetz, auf einem Gerät, das der CA vertraut): `https://servicecheck.firma.de/api/health` muss **ohne Zertifikatswarnung** `{"status":"ok"}` liefern. Auf dem Mac und anderen Geräten ohne Domäne muss die CA-Root vorher installiert werden.
+
+**Zertifikat erneuern:** Die Laufzeit steht im Zertifikat. Trag das Ablaufdatum in einen Kalender ein. Zum Erneuern wiederholst Du Punkt 5 mit dem neuen PFX. Das Zertifikat kann auf demselben Hostnamen ausgetauscht werden.
+
+Ab jetzt verwendest Du in **Schritt 18** `https://$APP_HOST/...` als Adresse.
 
 ## Schritt 18 – Anmeldung mit Entra ID einrichten
 
@@ -667,7 +731,7 @@ Diese Schritte erfolgen im **Entra-Admin-Center** (https://entra.microsoft.com),
 1. **Identität → Anwendungen → App-Registrierungen → Neue Registrierung.**
    - Name: `Service Check`
    - Unterstützte Kontotypen: **Nur Konten in diesem Organisationsverzeichnis** (Einzelmandant)
-   - Umleitungs-URI: Plattform **Web**, Wert `https://<APP>.azurewebsites.net/api/auth/oidc/callback` (mit Deinem App-Namen)
+   - Umleitungs-URI: Plattform **Web**, Wert `https://<APP_HOST>/api/auth/oidc/callback` (mit Deinem eigenen Namen aus Schritt 17.1, sonst `<APP>.azurewebsites.net`)
    - **Registrieren**
 2. Auf der Übersichtsseite notierst Du **Anwendungs-ID (Client)** und **Verzeichnis-ID (Mandant)**.
 3. **Zertifikate & Geheimnisse → Neuer geheimer Clientschlüssel.** Ablauf 12 oder 24 Monate. Den **Wert** sofort kopieren, er wird nur einmal angezeigt. Trage das Ablaufdatum in einen Kalender ein. Danach ist die Anmeldung kaputt, bis ein neuer Schlüssel in der App hinterlegt ist.
@@ -686,15 +750,23 @@ Diese Schritte erfolgen im **Entra-Admin-Center** (https://entra.microsoft.com),
 TENANT_ID="<Verzeichnis-ID aus Punkt 2>"
 CLIENT_ID="<Anwendungs-ID aus Punkt 2>"
 CLIENT_SECRET="<Wert des Clientschlüssels aus Punkt 3>"
+APP_HOST="${APP_HOST:-$APP.azurewebsites.net}"   # eigener Name aus Schritt 17.1, sonst der Standardname
 
 az webapp config appsettings set --resource-group $RG --name $APP --settings \
   OIDC_TENANT_ID="$TENANT_ID" \
   OIDC_CLIENT_ID="$CLIENT_ID" \
   OIDC_CLIENT_SECRET="$CLIENT_SECRET" \
-  OIDC_REDIRECT_URI="https://$APP.azurewebsites.net/api/auth/oidc/callback"
+  OIDC_REDIRECT_URI="https://$APP_HOST/api/auth/oidc/callback"
 
 az webapp restart --resource-group $RG --name $APP
 ```
+
+Die Umleitungs-URI in Entra und `OIDC_REDIRECT_URI` müssen **zeichengleich** sein.
+
+**Zwei Stolpersteine bei der Entra-Einrichtung:**
+
+- **Einwilligung des Administrators:** Verlangt Euer Tenant eine Genehmigung („Approval required“), erteilt ein Administrator unter **App-Registrierungen → Service Check → API-Berechtigungen → Administratoreinwilligung erteilen**. Die App braucht nur Microsoft Graph `User.Read` (delegiert, `openid`, `profile`, `email`).
+- **Ausgehende Freigabe der App:** Die App holt das Token **serverseitig** bei `login.microsoftonline.com` ab. Ist das durch die Firewall blockiert, meldet der Browser nach der Microsoft-Anmeldung einen nackten **Internal Server Error**, und im Protokoll steht `httpx.ConnectError`. Siehe Anhang B.
 
 Danach steht auf der Anmeldeseite **„Mit Microsoft anmelden“**. Melde Dich damit an (aus dem Netz, Schritt 17). Unter „Benutzer“ erscheint Dein Konto mit dem Hinweis **SSO**. Rolle und Name kommen ab sofort aus Entra und werden bei jeder Anmeldung aktualisiert.
 
@@ -748,19 +820,56 @@ Den Blob-Namen findest Du im Portal unter Speicherkonto → Container `documents
 
 ## Schritt 21 – Updates einspielen
 
-Neuen Stand holen, neues Image **in Azure** bauen, App darauf umstellen (die Befehle laufen über öffentliche Adressen bzw. die Verwaltungsschnittstelle, es ist keine Netzanbindung nötig):
+Neuen Stand holen, neues Image **in Azure** bauen, App darauf umstellen. Die Befehle laufen über öffentliche Adressen bzw. die Azure-Verwaltung, es ist keine Netzanbindung nötig, **solange der öffentliche Zugang der Web-App nicht abgeschaltet ist** (Schritt 16). Danach brauchst Du für Logs den Zugang aus dem Netz, für den Image-Bau und die Umstellung weiterhin nicht.
+
+**1. Aktuellen Stand holen** (im Ordner des Repositories auf dem Mac, auf dem Branch, den Ihr verwendet):
 
 ```bash
-cd ServiceCheckWebApp && git pull
-az acr build --registry $ACR --image servicecheck:2 --file Dockerfile .
-az webapp config container set --resource-group $RG --name $APP --container-image-name $ACR.azurecr.io/servicecheck:2
+BRANCH=main        # der Branch mit dem neuen Stand, falls Ihr einen anderen verwendet: hier eintragen
+cd ServiceCheckWebApp
+git fetch origin
+git checkout $BRANCH
+git pull
+```
+
+**2. Aktuelles Tag ermitteln und um eins erhöhen:**
+
+```bash
+source ~/azure.env
+az webapp config show --resource-group $RG --name $APP --query linuxFxVersion --output tsv
+```
+
+Die Ausgabe sieht aus wie `DOCKER|<registry>.azurecr.io/servicecheck:1`. Das Tag hinter dem Doppelpunkt ist der laufende Stand. Setze das nächste:
+
+```bash
+TAG=2    # eine Zahl höher als das laufende Tag
+```
+
+**3. Image bauen, umstellen, neu starten:**
+
+```bash
+az acr build --registry $ACR --image servicecheck:$TAG --file Dockerfile .
+az webapp config container set --resource-group $RG --name $APP --container-image-name $ACR.azurecr.io/servicecheck:$TAG
 az webapp restart --resource-group $RG --name $APP
 ```
 
-Datenbankänderungen laufen beim Start automatisch als Migration. Erhöhe das Tag (`:2`, `:3`, …) bei jedem Update, damit klar ist, was läuft, und Du bei Problemen auf das vorherige Tag zurückstellen kannst. **Vor größeren Updates** machst Du zusätzlich eine
-Datenbanksicherung (`scripts/backup.sh`, aus dem Netz) oder notierst wenigstens den Wiederherstellungszeitpunkt.
+Den Befehl `az acr build` führst Du im Hauptordner des Repositories aus (dort liegt das `Dockerfile`); der Punkt am Ende ist der Ordner. Der Bau dauert einige Minuten. Beim ersten Aufruf nach dem Neustart braucht die App ein paar Sekunden zum Starten.
 
-**Logs im privaten Netz:** `az webapp log tail` und das Portal-Logstream brauchen die Verwaltungsadresse der App und funktionieren **nur noch aus dem Netz**. Empfohlen: die App-Logs an einen Log-Analytics-Arbeitsbereich senden (Diagnoseeinstellungen), den Du im Portal einsehen kannst.
+**4. Prüfen:** Die App öffnen (`https://$APP_HOST` aus dem Netz) und die geänderte Stelle ansehen. Im Browser notfalls mit Strg+F5 neu laden, damit keine alte Oberfläche aus dem Cache kommt.
+
+Datenbankänderungen laufen beim Start automatisch als Migration, bestehende Daten bleiben erhalten. Erhöhe das Tag bei jedem Update, damit klar ist, was läuft, und Du bei Problemen mit `config container set … servicecheck:<altes Tag>` plus Neustart auf den vorherigen Stand zurückstellen kannst. **Vor größeren Updates** machst Du zusätzlich eine
+Datenbanksicherung (`scripts/backup.sh`, aus dem Netz) oder notierst wenigstens den Wiederherstellungszeitpunkt. Eine **Migration lässt sich nicht automatisch zurücknehmen**: Nach einem Zurückstellen des Images bleibt die Datenbank im neuen Stand, was bei reinen Spaltenergänzungen unkritisch ist.
+
+**Logs:** Solange der öffentliche Zugang an ist, holst Du sie von jedem Rechner aus: Einmal die Protokollierung einschalten, dann herunterladen:
+
+```bash
+az webapp log config --resource-group $RG --name $APP --docker-container-logging filesystem
+az webapp log download --resource-group $RG --name $APP --log-file ~/applogs.zip
+unzip -o ~/applogs.zip -d ~/applogs
+grep -rhiE "Traceback|Error|Timeout" ~/applogs | tail -40
+```
+
+Nach Schritt 16 brauchen `az webapp log tail`, der Download und das Portal-Logstream die Verwaltungsadresse der App und funktionieren **nur noch aus dem Netz**. Empfohlen für den Dauerbetrieb: die App-Logs an einen Log-Analytics-Arbeitsbereich senden (Diagnoseeinstellungen), den Du im Portal einsehen kannst.
 
 ---
 
@@ -821,7 +930,13 @@ Datenbanksicherung (`scripts/backup.sh`, aus dem Netz) oder notierst wenigstens 
 | Anmeldeseite: „Die Antwort von Microsoft konnte nicht überprüft werden“ / „Anmeldung bei Microsoft fehlgeschlagen“ | `OIDC_TENANT_ID`/`OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` falsch, Clientschlüssel abgelaufen oder Umleitungs-URI weicht ab |
 | Microsoft meldet `AADSTS50011` (Antwort-URL stimmt nicht überein) | Umleitungs-URI in der App-Registrierung und `OIDC_REDIRECT_URI` müssen **exakt** gleich sein (Schreibweise, `https`) |
 | Microsoft meldet `AADSTS50105` (Benutzer nicht zugewiesen) | Weil „Zuweisung erforderlich“ = Ja: Benutzer der App zuweisen |
-| Kein Button „Mit Microsoft anmelden“ | Eine der vier `OIDC_…`-Einstellungen fehlt. Prüfen: `https://$APP.azurewebsites.net/api/auth/config` (aus dem Netz) muss `"oidc":true` zeigen |
+| Kein Button „Mit Microsoft anmelden“ | Eine der vier `OIDC_…`-Einstellungen fehlt. Prüfen: `https://$APP_HOST/api/auth/config` (aus dem Netz) muss `"oidc":true` zeigen |
+| Nach der Microsoft-Anmeldung **Internal Server Error**; Protokoll: `httpx.ConnectError: [Errno 99] Cannot assign requested address` bei `.../oauth2/v2.0/token` | Die App erreicht `login.microsoftonline.com` ausgehend nicht (Firewall oder Routing). Freigabe `snet-app` → `login.microsoftonline.com`, TCP 443 (FQDN) beantragen. Zum Eingrenzen: `az webapp config set --resource-group $RG --name $APP --vnet-route-all-enabled false` und `az webapp restart` leitet nur noch Verkehr zu privaten Adressen durch das Netz (Datenbank und Speicher bleiben privat, Internetverkehr nimmt den normalen Azure-Weg). Das ist ein Sicherheitskompromiss, den Ihr bewusst entscheidet. Das Protokoll holst Du mit `az webapp log config … --docker-container-logging filesystem` und `az webapp log download` |
+| Microsoft meldet `AADSTS900561` („The endpoint only accepts POST requests. Received a GET request.“) | Folgefehler vom **Zurück-Button** des Browsers nach einem Anmeldeschritt, nicht die Ursache. Anmeldung in einem neuen privaten Fenster von der App-Adresse aus neu starten |
+| Microsoft-Anmeldung hängt bei „Let's keep your account secure“ | Das ist die MFA-Registrierung Eures Tenants. Mit „Not now“ überspringen, Seite neu laden oder unter `https://aka.ms/mysecurityinfo` eine Methode registrieren. Hat nichts mit der App zu tun |
+| `az webapp config hostname add` scheitert mit Hinweis auf eine fehlende Besitzprüfung | Der TXT-Eintrag `asuid.<name>` ist im **öffentlichen** DNS nicht sichtbar oder hat den falschen Wert. Prüfen mit `nslookup -type=TXT asuid.<name> 8.8.8.8` und mit der ID aus `az webapp show … --query customDomainVerificationId` vergleichen |
+| Browser zeigt für den eigenen Namen „Name stimmt nicht überein“ | Zertifikat noch nicht gebunden (Schritt 17.1, Punkt 5) oder der Name fehlt als SAN im Zertifikat |
+| Hochladen des PFX schlägt fehl | Passwort falsch, privater Schlüssel fehlt oder Verschlüsselung nicht Triple-DES (neuere OpenSSL-Versionen): PFX neu exportieren oder mit `-legacy` umwandeln |
 
 ## Anhang C – Aufräumen
 
@@ -841,7 +956,7 @@ Gibt es noch Ressourcen einer **früheren Bereitstellung** (z. B. in einem ander
 - Geheimnisse (`SECRET_KEY`, `DATABASE_URL`, `OIDC_CLIENT_SECRET`) in einem **Key Vault** ablegen und per Key-Vault-Referenz in die App-Einstellungen einbinden.
 - **Netzwerksicherheitsgruppen** je Subnetz nach Anhang A, sofern die IT sie verlangt.
 - App-Logs an Log Analytics senden, Warnungen (Azure Monitor) für ausgefallene Integritätsprüfung, Datenbank-Speicher und ablaufenden Clientschlüssel.
-- Eigene Domain mit Zertifikat. Danach `OIDC_REDIRECT_URI` und die Umleitungs-URI in Entra anpassen.
+- Das Ablaufdatum des Zertifikats (Schritt 17.1) und des Entra-Clientschlüssels (Schritt 18) überwachen.
 - Die Ressourcen als Code (Bicep oder Terraform) und eine Pipeline für Updates.
 - Zusätzliche, unabhängige Datenbanksicherung (`scripts/backup.sh`) in ein separates Speicherkonto oder Abonnement.
 - Vor dem Einsatz mit echten Kundendaten: die offenen Punkte der Datenschutzprüfung (Sicherheits-Header, Schutz vor Passwort-Raten, Auskunfts- und Löschwerkzeuge, Aufbewahrungsfristen, Protokoll) abarbeiten.
