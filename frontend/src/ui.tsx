@@ -30,6 +30,23 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
   );
 }
 
+/** Firmenlogo (eigenes aus den Einstellungen, sonst Standard). Nach dem Ändern bumpLogo() aufrufen, dann laden alle Stellen neu. */
+let logoVersion = 0;
+const logoListeners = new Set<() => void>();
+export function bumpLogo() {
+  logoVersion = Date.now();
+  logoListeners.forEach((f) => f());
+}
+export function Logo({ className, alt = "Firmenlogo" }: { className?: string; alt?: string }) {
+  const [v, setV] = useState(logoVersion);
+  useEffect(() => {
+    const f = () => setV(logoVersion);
+    logoListeners.add(f);
+    return () => { logoListeners.delete(f); };
+  }, []);
+  return <img className={className} src={`/api/branding/logo?v=${v}`} alt={alt} />;
+}
+
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
     <label className="field">

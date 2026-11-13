@@ -1,5 +1,4 @@
 """PDF-Report zum Service Check (ReportLab)."""
-import os
 from io import BytesIO
 from xml.sax.saxutils import escape
 
@@ -12,6 +11,7 @@ from reportlab.platypus import (Image, KeepTogether, PageBreak, Paragraph, Simpl
                                 TableStyle)
 
 from . import config
+from .branding import current_logo
 
 LIGHTS = {
     "green": (colors.HexColor("#2e9e4f"), "GRÜN", "Risikoarmer Betrieb durch uns als MSP ist möglich."),
@@ -32,7 +32,6 @@ INK = colors.HexColor("#1f2933")
 MUTED = colors.HexColor("#5b6470")
 LINE = colors.HexColor("#d5d9de")
 BRAND = colors.HexColor("#0077a9")  # PCO-Blau
-LOGO = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
 
 
 def _styles():
@@ -77,13 +76,16 @@ def make_footer(label: str):
 
 
 def header(title: str, st, width):
-    """Titelzeile mit Firmenlogo rechts (Logo-Datei: app/assets/logo.png)."""
+    """Titelzeile mit Firmenlogo rechts (eigenes Logo aus den Einstellungen, sonst das Standardlogo)."""
     cells = [_p(title, st["h1"]), ""]
-    if os.path.isfile(LOGO):
-        h = 15 * mm
-        img = Image(LOGO, width=h * 229 / 104, height=h)
-        img.hAlign = "RIGHT"
-        cells[1] = img
+    logo = current_logo()
+    h, max_w = 15 * mm, 38 * mm
+    w = h * logo.width / logo.height
+    if w > max_w:  # sehr breite Logos auf die Spaltenbreite begrenzen
+        w, h = max_w, max_w * logo.height / logo.width
+    img = Image(BytesIO(logo.data), width=w, height=h)
+    img.hAlign = "RIGHT"
+    cells[1] = img
     t = Table([cells], colWidths=[width - 40 * mm, 40 * mm])
     t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
                            ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("LINEBELOW", (0, 0), (-1, 0), 1.2, BRAND),

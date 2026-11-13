@@ -12,6 +12,8 @@ import Onboardings from "./pages/Onboardings";
 import OnboardingDetail from "./pages/OnboardingDetail";
 import Catalog from "./pages/Catalog";
 import Users from "./pages/Users";
+import Settings from "./pages/Settings";
+import { Logo } from "./ui";
 
 const AuthCtx = createContext<User | null>(null);
 export const useUser = () => useContext(AuthCtx)!;
@@ -29,7 +31,7 @@ function Shell() {
     <AuthCtx.Provider value={user}>
       <div className="layout">
         <aside className="side">
-          <div className="brand"><img src="/logo.png" alt="PCO" /><small>Service Check &amp; Onboarding</small></div>
+          <div className="brand"><Logo /><small>Service Check &amp; Onboarding</small></div>
           <nav>
             <NavLink to="/" end>Übersicht</NavLink>
             <div className="nav-group">Modul 1</div>
@@ -40,6 +42,7 @@ function Shell() {
             <NavLink to="/customers">Kunden</NavLink>
             <NavLink to="/catalog">Kataloge &amp; Vorlagen</NavLink>
             {user.role === "admin" && <NavLink to="/users">Benutzer</NavLink>}
+            {user.role === "admin" && <NavLink to="/settings">Einstellungen</NavLink>}
           </nav>
           <div className="side-foot">
             <div>{user.full_name || user.username}<small>{user.role === "admin" ? "Administrator" : "Consultant"}</small></div>
@@ -66,6 +69,7 @@ export default function App() {
         <Route path="onboardings/:id" element={<OnboardingDetail />} />
         <Route path="catalog" element={<Catalog />} />
         <Route path="users" element={<Users />} />
+        <Route path="settings" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>

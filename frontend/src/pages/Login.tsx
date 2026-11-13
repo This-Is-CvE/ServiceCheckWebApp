@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, login, setToken } from "../api";
-import { ErrorBox, Field } from "../ui";
+import { ErrorBox, Field, Logo } from "../ui";
 
 const ERRORS: Record<string, string> = {
   no_role: "Für dieses Konto ist keine Rolle in der Anwendung vergeben. Bitte beim Administrator die Zuweisung „ServiceCheck.Consultant“ oder „ServiceCheck.Admin“ anfragen.",
@@ -41,7 +41,7 @@ export default function Login() {
   return (
     <div className="center">
       <form className="card login" onSubmit={submit}>
-        <img src="/logo.png" alt="PCO" className="login-logo" />
+        <Logo className="login-logo" />
         <h1><small>Service Check &amp; Onboarding</small></h1>
         <ErrorBox error={err} />
         {methods.oidc && <a className="btn primary block-btn" href="/api/auth/oidc/login">Mit Microsoft anmelden</a>}

@@ -231,6 +231,18 @@ class OnboardingContact(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
 
 
+class BrandingLogo(Base):
+    """Eigenes Firmenlogo (höchstens eine Zeile, id=1). Ohne Eintrag gilt das mitgelieferte Standardlogo."""
+    __tablename__ = "branding_logo"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    content_type: Mapped[str] = mapped_column(String(50))
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    updated_by: Mapped[str] = mapped_column(String(200), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class OnboardingDocument(Base):
     """Abgelegter PDF-Stand der Onboarding-Dokumentation (unveränderlicher Snapshot)."""
     __tablename__ = "onboarding_documents"

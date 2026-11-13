@@ -84,6 +84,11 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 .item-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .item .note { margin-top: 6px; font-size: 13px; }
 .pre { white-space: pre-line; }
+.logo-settings { align-items: flex-start; gap: 24px; }
+.logo-preview { display: block; max-width: 260px; max-height: 120px; padding: 10px 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.file-btn { cursor: pointer; } .file-btn.disabled { opacity: .6; cursor: default; }
+.logo-hint { max-width: 520px; margin-top: 10px; }
+.brand img, .login-logo { object-fit: contain; max-height: 90px; }
 .howto { margin-top: 6px; padding: 6px 10px; font-size: 13px; border-left: 3px solid var(--brand); border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--brand) 8%, transparent); }
 .howto > b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .seg { display: inline-flex; flex-shrink: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }

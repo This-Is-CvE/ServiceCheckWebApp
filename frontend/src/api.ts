@@ -40,6 +40,12 @@ export async function api<T = any>(path: string, method = "GET", body?: unknown)
   return res.status === 204 ? (undefined as T) : res.json();
 }
 
+/** Datei hochladen (multipart). Den Content-Type mit Grenze setzt der Browser selbst. */
+export async function apiUpload<T = any>(path: string, form: FormData, method = "PUT"): Promise<T> {
+  const res = await request(path, { method, body: form });
+  return res.json();
+}
+
 export async function login(username: string, password: string) {
   const res = await request("/auth/login", {
     method: "POST",

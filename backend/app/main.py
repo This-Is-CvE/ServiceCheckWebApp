@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from .database import SessionLocal, engine
 from .db_migrate import upgrade_db
-from .routers import auth, catalog, checks, customers, onboarding
+from .routers import auth, branding, catalog, checks, customers, onboarding
 from .seed import seed_admin, seed_demo
 
 
@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Service Check & Onboarding", lifespan=lifespan)
-for r in (auth, catalog, customers, checks, onboarding):
+for r in (auth, branding, catalog, customers, checks, onboarding):
     app.include_router(r.router)
 
 
