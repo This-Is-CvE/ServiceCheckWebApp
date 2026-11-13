@@ -76,9 +76,9 @@ def make_footer(label: str):
 
 
 def header(title: str, st, width):
-    """Titelzeile mit Firmenlogo rechts (eigenes Logo aus den Einstellungen, sonst das Standardlogo)."""
+    """Titelzeile mit Firmenlogo rechts (Report-Logo aus den Einstellungen, sonst das Logo der Anwendung)."""
     cells = [_p(title, st["h1"]), ""]
-    logo = current_logo()
+    logo = current_logo(kind="report")
     h, max_w = 15 * mm, 38 * mm
     w = h * logo.width / logo.height
     if w > max_w:  # sehr breite Logos auf die Spaltenbreite begrenzen

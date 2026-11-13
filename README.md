@@ -79,9 +79,10 @@ zusätzliche Onboarding-Punkte mitbringen.
 Jedes Onboarding lässt sich als PDF (mit Logo, allgemeinen Angaben, technischer Basis, Checklisten und
 Unterschriftenfeldern) herunterladen und für den Kunden verwenden. „PDF ablegen" speichert den aktuellen Stand als
 unveränderliches Dokument in der Datenbank beim Onboarding; beim Abschluss wird automatisch eines abgelegt.
-Das Logo tauschen Administratoren selbst aus: **Einstellungen → Firmenlogo** (PNG oder JPEG, höchstens 1 MB). Es gilt für die
-Seitenleiste, die Anmeldeseite und die PDFs und liegt in der Datenbank (ist also in der Sicherung enthalten). Ohne eigenes Logo
-wird das Standardlogo `backend/app/assets/logo.png` verwendet.
+Die Logos tauschen Administratoren selbst aus: **Einstellungen** (PNG oder JPEG, höchstens 1 MB). Es gibt ein Logo für die
+**Anwendung** (Seitenleiste, Anmeldeseite) und eines für **Reports** (Kopf der PDFs). Ohne eigenes Report-Logo verwenden die PDFs das
+Logo der Anwendung, ohne eigenes Anwendungslogo gilt das Standardlogo `backend/app/assets/logo.png`. Die Logos liegen in der
+Datenbank und sind damit in der Sicherung enthalten.
 
 ## Betrieb, Sicherung, Azure
 

@@ -232,7 +232,7 @@ class OnboardingContact(Base):
 
 
 class BrandingLogo(Base):
-    """Eigenes Firmenlogo (höchstens eine Zeile, id=1). Ohne Eintrag gilt das mitgelieferte Standardlogo."""
+    """Eigene Firmenlogos: id=1 Anwendung, id=2 Reports (PDF). Ohne Eintrag gelten die Rückfallwerte aus branding.py."""
     __tablename__ = "branding_logo"
     id: Mapped[int] = mapped_column(primary_key=True)
     data: Mapped[bytes] = mapped_column(LargeBinary)

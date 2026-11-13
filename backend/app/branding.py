@@ -1,4 +1,7 @@
-"""Firmenlogo: eigenes Logo aus der Datenbank, sonst das mitgelieferte Standardlogo (app/assets/logo.png).
+"""Firmenlogos: eines für die Anwendung (Seitenleiste, Anmeldeseite) und eines für Reports (PDF-Kopf).
+
+Gültig ist das eigene Logo aus der Datenbank. Ohne eigenes Logo gilt für die Anwendung das mitgelieferte Standardlogo
+(app/assets/logo.png), für Reports das Logo der Anwendung.
 
 Erlaubt sind nur PNG und JPEG. SVG bewusst nicht: Es kann Skripte enthalten und lässt sich im PDF nicht verwenden.
 """
@@ -19,6 +22,7 @@ MAX_BYTES = 1_000_000
 MAX_SIDE = 4000
 MIN_SIDE = 16
 FORMATS = {"PNG": "image/png", "JPEG": "image/jpeg"}
+KINDS = {"app": 1, "report": 2}  # Zeilen-ID in der Tabelle branding_logo
 
 
 @dataclass(frozen=True)
@@ -66,12 +70,12 @@ def _default() -> Logo:
     return Logo(data, content_type, w, h)
 
 
-def current_logo(db: Session | None = None) -> Logo:
-    """Das gültige Logo. Ohne Sitzung öffnet die Funktion selbst eine (z. B. beim Erzeugen von PDFs)."""
+def current_logo(db: Session | None = None, kind: str = "app") -> Logo:
+    """Das gültige Logo für "app" oder "report". Ohne Sitzung öffnet die Funktion selbst eine (z. B. beim Erzeugen von PDFs)."""
     if db is None:
         with SessionLocal() as own:
-            return current_logo(own)
-    row = db.get(BrandingLogo, 1)
-    if row is None:
-        return _default()
-    return Logo(row.data, row.content_type, row.width, row.height)
+            return current_logo(own, kind)
+    row = db.get(BrandingLogo, KINDS[kind])
+    if row is not None:
+        return Logo(row.data, row.content_type, row.width, row.height)
+    return current_logo(db, "app") if kind == "report" else _default()
